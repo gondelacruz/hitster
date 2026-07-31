@@ -1,0 +1,14 @@
+{
+  "name": "hitster-familia",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Juego tipo Hitster para jugar en familia con Spotify. Web estatica: no necesita servidor.",
+  "scripts": {
+    "test": "node test/pruebas.mjs && node --import ./test/registrar.mjs test/partida.mjs",
+    "test:reglas": "node test/pruebas.mjs",
+    "test:partida": "node --import ./test/registrar.mjs test/partida.mjs",
+    "servir": "npx --yes http-server . -p 8080 -c-1"
+  },
+  "devDependencies": { "jsdom": "^24.0.0" }
+}
