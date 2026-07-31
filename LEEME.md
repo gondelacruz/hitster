@@ -181,6 +181,10 @@ Sirve para dos cosas:
   escribid el año real y la app **recalcula quién acertó**. Si el equipo que jugó el turno en
   realidad tenía razón, rectifica y se queda la carta; si en realidad tenía razón alguno de los
   que intentaron robar, pasa a ser suya; y si ya no la merece nadie, se la quita a quien la tuviera.
+- **No suena la música** (por ejemplo, Spotify no tenía ningún dispositivo activo): el **anfitrión**
+  abre Spotify en el móvil o el altavoz, le da a reproducir algo un segundo para que quede activo, y
+  pulsa **Reintentar reproducir** en su propio botón «?». Solo lo ve el anfitrión; el resto de
+  jugadores ven un aviso pidiéndoselo.
 
 ---
 
@@ -257,8 +261,8 @@ inglés»). Añade las que quieras al final de la lista, antes del `];`.
 | Problema | Qué hacer |
 |---|---|
 | «INVALID_CLIENT: Invalid redirect URI» | La dirección de **Redirect URIs** en Spotify no es idéntica a la de tu web. Tiene que llevar `https://`, el `/hitster/` y **la barra final**. |
-| «Spotify no encuentra ningún dispositivo activo» | Abre Spotify en el móvil o el altavoz del anfitrión y dale a reproducir cualquier cosa un segundo, para que quede como dispositivo activo. La app siempre usa ese, no hay que elegirlo dentro del juego. |
-| No suena nada en el iPad | Abre la app de Spotify en el propio iPad (o en un altavoz/móvil aparte) y dale a play un segundo antes de empezar la partida. |
+| «Spotify no encuentra ningún dispositivo activo» | Abre Spotify en el móvil o el altavoz del anfitrión y dale a reproducir cualquier cosa un segundo, para que quede como dispositivo activo. Después, el anfitrión pulsa **Reintentar reproducir** en el botón «?» de la esquina (no hace falta refrescar la página ni saltar la canción). |
+| No suena nada en el iPad | Abre la app de Spotify en el propio iPad (o en un altavoz/móvil aparte) y dale a play un segundo. Si ya estabais a mitad de ronda, el anfitrión puede pulsar **Reintentar reproducir** en el botón «?» en vez de perder la canción. |
 | «Este reproductor necesita Spotify Premium» | La cuenta del anfitrión no es Premium. Es un requisito de Spotify, no hay forma de saltárselo. |
 | Los demás equipos no ven la partida | Revisa que `databaseURL` esté en `config.js` y que publicaste las reglas de Firebase. |
 | Se cerró la pestaña del anfitrión | Volved a entrar en la web: la partida se recupera sola. Si el anfitrión sale con el botón **Salir**, la partida se borra. |

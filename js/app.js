@@ -419,10 +419,22 @@ async function sonar(uri) {
     S.error = null;
   } catch (e) {
     S.error = e.status === 404
-      ? "Spotify no encuentra ningún dispositivo activo. Abre Spotify en el móvil o el altavoz y dale a play un segundo para que se active."
+      ? "Spotify no encuentra ningún dispositivo activo. Abre Spotify en el móvil o el altavoz, dale a "
+        + "reproducir algo un segundo para que quede activo, y pulsa \"Reintentar reproducir\" en el botón «?»."
       : "Spotify: " + e.message;
     render();
   }
+}
+
+/** URI de la canción de la ronda actual (esté ya revelada o siga boca abajo). */
+function uriRondaActual() {
+  const r = E?.ronda;
+  if (!r) return null;
+  if (r.secreto) {
+    const secreto = Net.revelar(r.secreto, S.codigo);
+    if (secreto?.uri) return secreto.uri;
+  }
+  return r.carta?.uri || null;
 }
 
 // ============================================================
@@ -643,6 +655,15 @@ const acciones = {
 
   // ----- botón de ayuda (esquina) -----
   abrirAyuda() { S.modal = "ayuda"; },
+
+  /** Reintentar que suene la canción actual (p. ej. tras abrir Spotify en el altavoz). */
+  async reintentarSonar() {
+    if (!soyHost()) return;
+    const uri = uriRondaActual();
+    S.modal = null;
+    if (!uri) { S.error = "No encuentro la canción de esta ronda para reintentarla."; return; }
+    await sonar(uri);
+  },
 
   // ----- corregir un año equivocado (Spotify a veces se equivoca con remasters) -----
   corregirAnio() {
@@ -1165,16 +1186,29 @@ function modal() {
          Podéis gastar ${AJUSTES.fichasParaSaltar} para saltar una canción que no conocéis.</p>
       <p><b>Equipos con varios dispositivos:</b> todo el que se une a un equipo puede aportar sus canciones
          de Spotify, pero solo quien lo creó juega los turnos.</p>
-      <p><b>El botón "?"</b> de la esquina sirve para corregir un año equivocado de Spotify o para cambiar
-         una canción rota/errónea sin gastar fichas.</p>
+      <p><b>El botón "?"</b> de la esquina sirve para corregir un año equivocado de Spotify, cambiar
+         una canción rota/errónea sin gastar fichas, o reintentar que suene la música si no ha sonado
+         (por ejemplo, porque Spotify no tenía ningún dispositivo activo).</p>
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
   }
 
   if (S.modal === "ayuda") {
     const puedeSaltar = puedeSaltarGratis();
     const puedeCorregir = puedeCorregirAnio();
+    const r = E?.ronda;
+    const puedeReintentar = soyHost() && !!r && ["colocando", "robando"].includes(r.subfase);
     cuerpo = `
       <h2>¿Algún problema con esta canción?</h2>
+      ${puedeReintentar ? `
+        <p class="mini">¿No suena la música, o Spotify dice que no encuentra ningún dispositivo activo?
+          Abre Spotify en el móvil o el altavoz, dale a reproducir algo un segundo para que quede
+          activo y pulsa este botón.</p>
+        <button class="grande sec" data-accion="reintentarSonar">Reintentar reproducir</button>
+        <div style="height:14px"></div>` : ""}
+      ${!soyHost() && !!r && ["colocando", "robando"].includes(r.subfase) ? `
+        <p class="mini">¿No suena la música? Pedid al anfitrión que abra Spotify en el altavoz y pulse
+          "Reintentar reproducir" desde su propio botón «?».</p>
+        <div style="height:14px"></div>` : ""}
       ${puedeSaltar ? `
         <p class="mini">¿Ha sonado una canción rota, repetida o que claramente no es la que tocaba?
           Podéis cambiarla sin gastar fichas.</p>
@@ -1184,8 +1218,8 @@ function modal() {
         <p class="mini">¿Spotify ha puesto un año equivocado (remasterización, recopilatorio…)?</p>
         <button class="grande sec" data-accion="corregirAnio">Corregir el año</button>
         <div style="height:14px"></div>` : ""}
-      ${!puedeSaltar && !puedeCorregir
-        ? '<p class="mini">Ahora mismo no hay nada que corregir. Vuelve a mirar aquí si suena una canción rota o el año no cuadra.</p>' : ""}
+      ${!puedeSaltar && !puedeCorregir && !puedeReintentar
+        ? '<p class="mini">Ahora mismo no hay nada que corregir. Vuelve a mirar aquí si suena una canción rota, no suena nada o el año no cuadra.</p>' : ""}
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
   }
 

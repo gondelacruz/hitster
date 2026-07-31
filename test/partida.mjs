@@ -45,7 +45,7 @@ globalThis.fetch = async (url, opciones = {}) => {
   const vacio = { ok: true, status: 204, statusText: "", text: async () => "" };
 
   if (u.includes("accounts.spotify.com/api/token"))
-    return json({ access_token: "tok", refresh_token: "ref", expires_in: 3600 });
+    return json({ access_token: "tok", refresh_token: "ref", expires_in: 3600, scope: Sp.SCOPES });
   if (u.includes("/v1/me/player/play")) { llamadas.play++; return vacio; }
   if (u.includes("/v1/me/player/pause")) { llamadas.pause++; return vacio; }
   if (u.includes("/v1/me/player/volume")) return vacio;
@@ -62,6 +62,9 @@ globalThis.fetch = async (url, opciones = {}) => {
                              pista("spotify:track:top-c", "De medio plazo", 2005)] });
     return json({ items: [] });
   }
+  // Reproducidas recientemente.
+  if (u.includes("/v1/me/player/recently-played"))
+    return json({ items: [{ track: pista("spotify:track:reciente-f", "Sonó hace poco", 2020) }] });
   // Canciones guardadas ("Me gusta").
   if (u.includes("/v1/me/tracks")) {
     if (qs.get("offset") !== "0") return json({ items: [] });
@@ -85,8 +88,15 @@ globalThis.fetch = async (url, opciones = {}) => {
   return json({ error: { message: "ruta no simulada: " + u } }, 404);
 };
 
+// Importamos spotify.js antes que nada más (no dispara ningún efecto al
+// importarlo, a diferencia de app.js) para poder sembrar un token de sesión
+// ya con todos los permisos concedidos (si no, con los cambios de "faltan
+// permisos", la propia app forzaría una reconexión en cuanto probáramos a
+// aportar canciones).
+const Sp = await import("../js/spotify.js");
+
 localStorage.setItem("hitster_spotify_token", JSON.stringify({
-  access_token: "tok", refresh_token: "ref", expira: Date.now() + 3.6e6,
+  access_token: "tok", refresh_token: "ref", expira: Date.now() + 3.6e6, alcance: Sp.SCOPES,
 }));
 
 // ---------- arrancamos la app ----------
@@ -149,15 +159,17 @@ t("el lobby muestra la sección de Nuestras canciones (mazo todo)", html().inclu
 t("aparece el botón para aportar Spotify", !!$('[data-accion="aportarSpotify"]'));
 
 await clic('[data-accion="aportarSpotify"]', "Aportar mis canciones de Spotify");
-await esperar(80); // varias llamadas de red encadenadas (top, guardadas, playlists)
+await esperar(80); // varias llamadas de red encadenadas (top, recientes, guardadas, playlists)
 salaAjena = fb._leer(`salas/${codigoAjeno}`);
 const aporte = salaAjena.aportes?.[miId];
-t("el aporte de Spotify queda guardado en la sala", !!aporte && aporte.canciones.length === 5);
+t("el aporte de Spotify queda guardado en la sala", !!aporte && aporte.canciones.length === 6);
 t("el peso se suma cuando la misma canción sale en varias fuentes",
   aporte?.canciones.find((c) => c.uri === "spotify:track:top-b")?.peso === 5);
 t("se incluyen canciones guardadas y de playlists propias, no solo el top",
   aporte?.canciones.some((c) => c.uri === "spotify:track:guardada-d")
   && aporte?.canciones.some((c) => c.uri === "spotify:track:playlist-e"));
+t("se incluyen canciones reproducidas recientemente",
+  aporte?.canciones.some((c) => c.uri === "spotify:track:reciente-f"));
 
 await clic('[data-accion="salir"]', "Salir del equipo compartido");
 salaAjena = fb._leer(`salas/${codigoAjeno}`);
@@ -179,6 +191,29 @@ salaAjena = fb._leer(`salas/${codigoAjeno}`);
 t("al salir siendo el único miembro, el equipo desaparece", !salaAjena?.equipos?.eq2);
 
 fb._escribir(`salas/${codigoAjeno}`, null); // limpiar la sala de prueba
+
+// ------------------------------------------------------------
+//  Una sesión de Spotify "antigua" (conectada antes de pedir permiso para
+//  leer canciones guardadas/playlists/reproducciones recientes) debe
+//  detectarse como incompleta, para que la app fuerce reconectar en vez de
+//  decir "no tienes historial" cuando el problema real son los permisos.
+// ------------------------------------------------------------
+console.log("Comprobando la detección de permisos insuficientes de Spotify…");
+const tokenCompleto = JSON.parse(localStorage.getItem("hitster_spotify_token"));
+
+localStorage.setItem("hitster_spotify_token", JSON.stringify({
+  ...tokenCompleto, alcance: "user-read-private user-read-email user-top-read",
+}));
+t("una sesión antigua sin permisos de biblioteca/playlists/recientes se detecta como incompleta",
+  Sp.faltanPermisos() === true);
+
+localStorage.setItem("hitster_spotify_token", JSON.stringify({
+  access_token: "tok", refresh_token: "ref", expira: Date.now() + 3.6e6, // sin campo "alcance" (formato viejo)
+}));
+t("una sesión sin campo de permisos guardado también fuerza reconectar", Sp.faltanPermisos() === true);
+
+localStorage.setItem("hitster_spotify_token", JSON.stringify(tokenCompleto)); // restauramos para el resto de pruebas
+t("con todos los permisos concedidos, no hace falta reconectar", Sp.faltanPermisos() === false);
 
 // ------------------------------------------------------------
 //  Pool comunitario: comprobación pura de la ponderación por canciones en común.
@@ -419,7 +454,7 @@ sinErrores("inicio de partida");
 const MI = "eq1";
 let vueltas = 0, rondasJugadas = 0, misTurnos = 0, filtraciones2 = 0,
     revelados = 0, robosHechos = 0, saltosHechos = 0, saltosGratisHechos = 0,
-    filtraciones = 0, corregidoUnaVez = false;
+    filtraciones = 0, corregidoUnaVez = false, reintentadoUnaVez = false;
 
 const rondasVistas = new Set();
 const est = () => fb._leer("salas/" + codigo);
@@ -442,6 +477,19 @@ while (est().fase === "jugando" && vueltas++ < 4000) {
   if (r.subfase === "colocando") {
     rondasJugadas++;
     if (activo === MI) {
+      // Una vez, como anfitrión, probamos "Reintentar reproducir" desde el
+      // botón de ayuda (por si Spotify no tenía ningún dispositivo activo).
+      if (!reintentadoUnaVez) {
+        reintentadoUnaVez = true;
+        const playsAntes = llamadas.play;
+        await clic('[data-accion="abrirAyuda"]', "Abrir ayuda para reintentar reproducir");
+        t('el botón de ayuda ofrece "Reintentar reproducir" mientras suena la canción',
+          !!document.querySelector('[data-accion="reintentarSonar"]'));
+        await clic('[data-accion="reintentarSonar"]', "Reintentar reproducir");
+        await esperar(20);
+        t("reintentar reproducir vuelve a llamar a Spotify", llamadas.play > playsAntes);
+        sinErrores("tras reintentar reproducir");
+      }
       // De vez en cuando saltamos la canción para ejercitar esa regla.
       misTurnos++;
       if (E.equipos[MI].fichas >= AJUSTES.fichasParaSaltar && misTurnos === 1) {
