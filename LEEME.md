@@ -138,14 +138,20 @@ Sirve para que los iPads se vean entre ellos en tiempo real. Es gratis.
 1. Abre la web → **Crear partida nueva** → **Conectar Spotify**.
 2. Pone el nombre de su equipo, elige el mazo y pulsa **Crear partida**.
 3. Aparece un **código de 4 dígitos**. Se lo dice a los demás.
-4. Elige dónde suena la música: un altavoz o el móvil donde ya tenga Spotify abierto
-   (**Elegir altavoz de Spotify**), o el propio navegador (**Sonar en este dispositivo**).
+4. Abre Spotify en el móvil o el altavoz donde quiere que suene la música y le da a reproducir
+   algo un segundo, para que quede como dispositivo activo (la app usa siempre ese, el que esté
+   sonando en Spotify Connect; no hace falta elegir nada dentro del juego).
 5. Cuando estén todos, pulsa **Empezar la partida**.
 
 **Los demás equipos**: abren la misma web → **Unirme con un código** → escriben el código. Después eligen
 si se **unen a un equipo que ya existe** (por ejemplo, si otro familiar ya creó "Los Abuelos" desde su
 propio móvil y quieren jugar juntos desde varios dispositivos) o si **crean un equipo nuevo**. No necesitan
 Spotify ni cuenta de nada para jugar.
+
+> **Ojo con los equipos de varios dispositivos:** solo quien **creó** el equipo (el líder) puede jugar
+> sus turnos —colocar la carta, robar, responder al bonus, avanzar de ronda—. El resto de dispositivos
+> que se unan a ese mismo equipo solo pueden mirar, animar y aportar sus canciones de Spotify. Es para
+> evitar líos cuando varios móviles tocan botones a la vez en el mismo equipo.
 
 ### Las reglas
 
@@ -163,10 +169,18 @@ Spotify ni cuenta de nada para jugar.
 
 El botón **Otros equipos** enseña las cartas de los demás en cualquier momento.
 
-Si en el momento de revelar la carta veis que **el año no es el correcto** (pasa a veces con
-reediciones o remasterizaciones), pulsad **¿Año equivocado? Corregir** justo debajo de la carta y
-escribid el año real. No cambia el resultado de esa ronda (ya jugada), solo corrige el dato para
-que valga a partir de ahora.
+### El botón «?» de la esquina
+
+Durante la partida hay un botón redondo con un **«?»** flotando en la esquina inferior derecha.
+Sirve para dos cosas:
+
+- **Canción rota o claramente equivocada** (a veces Spotify empareja mal una búsqueda): podéis
+  **cambiarla sin gastar fichas**. Solo puede hacerlo el líder del equipo en su turno, o el
+  anfitrión.
+- **Año equivocado en la carta ya revelada** (pasa a veces con reediciones o remasterizaciones):
+  escribid el año real y la app **recalcula quién acertó**. Si el equipo que jugó el turno en
+  realidad tenía razón, rectifica y se queda la carta; si en realidad tenía razón alguno de los
+  que intentaron robar, pasa a ser suya; y si ya no la merece nadie, se la quita a quien la tuviera.
 
 ---
 
@@ -174,19 +188,29 @@ que valga a partir de ahora.
 
 | Mazo | Qué trae |
 |---|---|
-| **Mixto** | 707 canciones de 1950 a hoy, internacionales y en español. Es el recomendado. |
-| **Solo internacional** | 478 canciones. |
-| **Solo español y latino** | 229 canciones: Mecano, Serrat, Héroes, Estopa, Soda Stereo, Rosalía, Bad Bunny… |
-| **Nuestras canciones** | Combina las canciones favoritas de todos los que se conecten. |
+| **Canciones famosas** | 707 canciones de 1950 a hoy, en español e inglés. Es el recomendado. |
+| **Solo en español y latino** | 229 canciones: Mecano, Serrat, Héroes, Estopa, Soda Stereo, Rosalía, Bad Bunny… |
+| **Solo en inglés** | 474 canciones. |
+| **Canciones de Spotify de los jugadores** | Solo lo que aporte cada persona conectando su Spotify. |
+| **Todo** | Lo que aporten los jugadores + las 707 canciones famosas, mezclado. |
 
-### Nuestras canciones: cómo funciona
+El mazo «Canciones de Spotify de los jugadores» depende totalmente de lo que aportéis: si sois
+pocos o aportáis poco, la partida puede acabarse antes de llegar a 10 cartas porque se agoten las
+canciones disponibles. Si queréis partida larga garantizada, usad «Todo».
 
-Cualquier dispositivo (el anfitrión o cualquiera que se una) puede pulsar, en la sala de espera,
-**Añadir mis canciones de Spotify**. Cada uno conecta su propia cuenta desde su propio móvil —no hace
-falta que todos usen la de Premium del anfitrión, esto solo lee sus canciones favoritas—. La app
-combina lo que aporte cada persona y **prioriza las canciones que varios tengáis en común**: si tú y
-tu hermano tenéis la misma canción en el top, es mucho más probable que salga que una que solo
-escucháis vosotros dos por separado.
+### Nuestras canciones (Spotify / Todo): cómo funciona
+
+Cualquier dispositivo (el anfitrión, el líder o cualquiera que se una a un equipo) puede pulsar, en la
+sala de espera, **Añadir mis canciones de Spotify**. Cada uno conecta su propia cuenta desde su propio
+móvil —no hace falta que todos usen la de Premium del anfitrión, esto solo lee sus canciones
+favoritas—. La app combina lo que aporte cada persona y **prioriza las canciones que varios tengáis en
+común**: si tú y tu hermano tenéis la misma canción en el top, es mucho más probable que salga que una
+que solo escucháis vosotros dos por separado.
+
+Antes de sumar, la app **normaliza el peso de cada persona**: si alguien conecta su Spotify y aporta
+muchísimas más canciones que otro (más historial, más playlists), no acapara el mazo. Cada persona
+"pesa" lo mismo en el reparto global; solo dentro de su propia lista se respeta qué le gusta más.
+Así, con dos personas, no debería salir casi todo de una sola.
 
 Para acertar mejor con lo que de verdad te gusta, cada aportación mezcla varias fuentes de Spotify:
 tu top de los últimos años, tu top de los últimos 6 meses, tus canciones con "Me gusta" y las
@@ -197,11 +221,18 @@ de toda la vida.
 La primera vez que uses esta función, Spotify te pedirá permiso otra vez (para leer tus canciones
 guardadas y tus playlists). Es normal, acepta y ya está.
 
-Los años del mazo curado están puestos a mano y comprobados: son el año de lanzamiento original,
-no el del disco remasterizado. Por eso la app **nunca** usa el año que da Spotify.
+El top personal de todo el mundo suele estar lleno de música actual (es lo que más se escucha).
+Para que la partida no se quede solo en canciones de los últimos años, la app sortea primero la
+década (dando más peso a partir de 1964, igual que en el mazo curado) y solo después mira qué
+canción de esa década tenéis en común. Aun así, si nadie ha escuchado nada de, por ejemplo, los 80,
+no va a aparecer de la nada: solo se reparte mejor lo que sí tenéis.
 
-> El mazo «Nuestras canciones» es la excepción: ahí el año sale del álbum de Spotify y en
-> remasterizaciones o recopilatorios puede fallar. Si alguien protesta, tiene razón.
+Los años del mazo curado están puestos a mano y comprobados: son el año de lanzamiento original,
+no el del disco remasterizado. Por eso la app **nunca** usa el año que da Spotify para ese mazo.
+
+> Los mazos «Spotify de los jugadores» y «Todo» son la excepción: ahí el año sale del álbum de
+> Spotify y en remasterizaciones o recopilatorios puede fallar. Para eso está el botón de
+> corregir el año en el momento.
 
 ### Añadir o corregir canciones
 
@@ -211,8 +242,9 @@ Están todas en `js/canciones.js`, una por línea:
 ["Título de la canción", "Artista", 1985, "es"],
 ```
 
-El último valor es `"int"` (internacional) o `"es"` (español/latino). Añade las que quieras
-al final de la lista, antes del `];`.
+El último valor es `"int"` (inglés), `"es"` (español/latino) u `"otro"` (otros idiomas: solo unas
+pocas, para que el mazo «Canciones famosas» y «Todo» las incluyan pero no salgan en «Solo en
+inglés»). Añade las que quieras al final de la lista, antes del `];`.
 
 ---
 
@@ -221,11 +253,12 @@ al final de la lista, antes del `];`.
 | Problema | Qué hacer |
 |---|---|
 | «INVALID_CLIENT: Invalid redirect URI» | La dirección de **Redirect URIs** en Spotify no es idéntica a la de tu web. Tiene que llevar `https://`, el `/hitster/` y **la barra final**. |
-| «Spotify no encuentra un dispositivo activo» | Abre Spotify en el móvil o el altavoz, dale a play a cualquier cosa un segundo, y en el juego pulsa **Cambiar altavoz**. |
-| No suena nada en el iPad | Safari en iPad bloquea el audio si no lo lanza un toque. Usa mejor **Elegir altavoz de Spotify** apuntando a un altavoz o al móvil. |
+| «Spotify no encuentra ningún dispositivo activo» | Abre Spotify en el móvil o el altavoz del anfitrión y dale a reproducir cualquier cosa un segundo, para que quede como dispositivo activo. La app siempre usa ese, no hay que elegirlo dentro del juego. |
+| No suena nada en el iPad | Abre la app de Spotify en el propio iPad (o en un altavoz/móvil aparte) y dale a play un segundo antes de empezar la partida. |
 | «Este reproductor necesita Spotify Premium» | La cuenta del anfitrión no es Premium. Es un requisito de Spotify, no hay forma de saltárselo. |
 | Los demás equipos no ven la partida | Revisa que `databaseURL` esté en `config.js` y que publicaste las reglas de Firebase. |
 | Se cerró la pestaña del anfitrión | Volved a entrar en la web: la partida se recupera sola. Si el anfitrión sale con el botón **Salir**, la partida se borra. |
+| Un familiar no puede colocar la carta ni robar | Es normal si no fue quien creó ese equipo: solo el líder del equipo juega los turnos. El resto puede aportar canciones de Spotify y mirar. |
 
 ---
 

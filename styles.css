@@ -205,6 +205,16 @@ label { display: block; font-size: 13px; color: var(--texto-suave); margin: 14px
 .gira { display: inline-block; animation: giro 1s linear infinite; }
 @keyframes giro { to { transform: rotate(360deg); } }
 
+/* ---------- botón flotante de ayuda ---------- */
+.ayuda-flotante {
+  position: fixed; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom));
+  width: 52px; height: 52px; min-height: 52px; padding: 0; margin: 0;
+  border-radius: 50%; font-size: 22px; font-weight: 900; line-height: 1;
+  background: var(--panel); color: var(--texto); border: 1.5px solid var(--panel-borde);
+  box-shadow: 0 6px 18px rgba(0,0,0,.35); z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+}
+
 @media (max-width: 560px) {
   .linea .celda-carta { flex: 0 0 96px; }
   .hueco { flex: 0 0 52px; min-height: 96px; }

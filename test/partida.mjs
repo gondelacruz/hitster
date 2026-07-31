@@ -46,8 +46,6 @@ globalThis.fetch = async (url, opciones = {}) => {
 
   if (u.includes("accounts.spotify.com/api/token"))
     return json({ access_token: "tok", refresh_token: "ref", expires_in: 3600 });
-  if (u.includes("/v1/me/player/devices"))
-    return json({ devices: [{ id: "dev1", name: "Altavoz del salón", type: "Speaker" }] });
   if (u.includes("/v1/me/player/play")) { llamadas.play++; return vacio; }
   if (u.includes("/v1/me/player/pause")) { llamadas.pause++; return vacio; }
   if (u.includes("/v1/me/player/volume")) return vacio;
@@ -128,7 +126,7 @@ t("arranca en la pantalla de inicio", html().includes("Crear partida nueva"));
 console.log("Comprobando unirse a un equipo y aportar canciones de Spotify…");
 const codigoAjeno = "5150";
 fb._escribir(`salas/${codigoAjeno}`, {
-  fase: "lobby", hostCliente: "otro-cliente", config: { mazo: "top" },
+  fase: "lobby", hostCliente: "otro-cliente", config: { mazo: "todo" },
   equipos: {
     eq1: { id: "eq1", nombre: "Los Tíos", color: COLORES_EQUIPO[0], orden: 0,
            fichas: AJUSTES.fichasIniciales, cartas: [], miembros: { "otro-cliente": true } },
@@ -147,7 +145,7 @@ let salaAjena = fb._leer(`salas/${codigoAjeno}`);
 const miId = sesionGuardada().clienteId;
 t("nos unimos al equipo existente sin borrar al otro miembro",
   salaAjena.equipos.eq1.miembros[miId] === true && salaAjena.equipos.eq1.miembros["otro-cliente"] === true);
-t("el lobby muestra la sección de Nuestras canciones (mazo top)", html().includes("Nuestras canciones"));
+t("el lobby muestra la sección de Nuestras canciones (mazo todo)", html().includes("Nuestras canciones"));
 t("aparece el botón para aportar Spotify", !!$('[data-accion="aportarSpotify"]'));
 
 await clic('[data-accion="aportarSpotify"]', "Aportar mis canciones de Spotify");
@@ -201,7 +199,10 @@ const estadoPoolFalso = {
 const poolFalso = App.poolComunitario(estadoPoolFalso);
 const compartida = poolFalso.find((c) => App.clave(c) === App.clave({ titulo: "Compartida", artista: "Grupo" }));
 t("la canción en común suma cuántas personas la aportan", compartida?.personas === 2);
-t("la canción en común suma los pesos de cada aporte", compartida?.peso === 9);
+// Los pesos ahora se normalizan por persona (peso/total-de-esa-persona) antes
+// de sumarlos, para que nadie acapare el mazo: 5/8 (p1) + 4/6 (p2) = 31/24.
+t("la canción en común suma los pesos normalizados de cada aporte",
+  Math.abs((compartida?.peso ?? 0) - 31 / 24) < 1e-9);
 
 let vecesElegidaComun = 0;
 const INTENTOS = 4000;
@@ -209,12 +210,170 @@ for (let i = 0; i < INTENTOS; i++) if (App.elegirPonderado(poolFalso) === compar
 t("la ponderación favorece claramente la canción en común frente a las demás",
   vecesElegidaComun / INTENTOS > 0.5);
 
+// El reparto entre personas debe ser justo: si alguien aporta muchas más
+// canciones que otro, no debe acaparar el mazo (el bug que reportó el usuario:
+// con dos personas, casi todo salía de una sola).
+const estadoDesigual = {
+  aportes: {
+    muchas: { nombre: "Aporta muchas", canciones: Array.from({ length: 100 }, (_, i) => (
+      { titulo: `CanciónMucha${i}`, artista: "A", anio: 2000 + (i % 20), uri: `u-mucha-${i}`, peso: 1 })) },
+    pocas: { nombre: "Aporta pocas", canciones: Array.from({ length: 5 }, (_, i) => (
+      { titulo: `CanciónPoca${i}`, artista: "B", anio: 1970 + i, uri: `u-poca-${i}`, peso: 1 })) },
+  },
+};
+const poolDesigual = App.poolComunitario(estadoDesigual);
+let vecesDePocas = 0;
+const INTENTOS_JUSTICIA = 4000;
+for (let i = 0; i < INTENTOS_JUSTICIA; i++) {
+  if (App.elegirPonderado(poolDesigual).titulo.startsWith("CanciónPoca")) vecesDePocas++;
+}
+t("quien aporta pocas canciones no queda aplastado por quien aporta muchas (reparto ~50/50 por persona)",
+  vecesDePocas / INTENTOS_JUSTICIA > 0.3 && vecesDePocas / INTENTOS_JUSTICIA < 0.7);
+
 const titulosVistos = new Set();
 for (let i = 0; i < 50; i++) {
-  const c = App.sacarCancion({ config: { mazo: "top" }, usadas: {}, ...estadoPoolFalso });
+  const c = App.sacarCancion({ config: { mazo: "todo" }, usadas: {}, ...estadoPoolFalso });
   if (c) titulosVistos.add(c.titulo);
 }
-t("con mazo 'top', sacarCancion combina el pool comunitario con el mazo curado", titulosVistos.size > 1);
+t("con mazo 'todo', sacarCancion combina el pool comunitario con el mazo curado", titulosVistos.size > 1);
+
+// El pool comunitario no debe estar sesgado solo a lo moderno: si hay canciones
+// de varias décadas disponibles, con suficientes tiradas deben salir todas.
+const poolMultiDecada = [
+  { titulo: "Vieja", artista: "A", anio: 1965, uri: "u1", peso: 1, personas: 1 },
+  { titulo: "Moderna muy popular", artista: "B", anio: 2023, uri: "u2", peso: 50, personas: 3 },
+];
+const decadasVistas = new Set();
+for (let i = 0; i < 300; i++) decadasVistas.add(App.elegirPonderadoPorDecada(poolMultiDecada).titulo);
+t("la ponderación por década deja salir también lo antiguo, aunque lo moderno sea más popular",
+  decadasVistas.size === 2);
+
+// ------------------------------------------------------------
+//  Corregir el año debe también rectificar quién se queda la carta.
+// ------------------------------------------------------------
+console.log("Comprobando que corregir el año rectifica al ganador…");
+const codigoRectifica = "6060";
+fb._escribir(`salas/${codigoRectifica}`, {
+  fase: "lobby", hostCliente: "otro-host", config: { mazo: "famosas" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Equipo Uno", color: COLORES_EQUIPO[0], orden: 0, fichas: 3,
+           cartas: [], miembros: {} },
+    eq2: { id: "eq2", nombre: "Equipo Dos", color: COLORES_EQUIPO[1], orden: 1, fichas: 2,
+           cartas: [], miembros: {} },
+  },
+  usadas: {}, aportes: {}, ronda: null, ganador: null,
+});
+await clic('[data-accion="irUnirse"]', "Unirse para probar la rectificación");
+document.getElementById("in-codigo").value = codigoRectifica;
+await clic('[data-accion="buscarSala"]', "Buscar sala de rectificación");
+await clic('[data-accion="unirmeEquipo"]', "Unirme a Equipo Uno");
+
+// Ahora que ya estamos dentro (y por tanto suscritos), fabricamos una ronda ya
+// "resuelta" con el año viejo: el equipo activo la dio por buena (mal, porque
+// el año real es otro) y un ladrón que había fallado con el año viejo, en
+// realidad tenía razón con el año correcto.
+fb._escribir(`salas/${codigoRectifica}`, {
+  fase: "jugando", hostCliente: "otro-host", config: { mazo: "famosas" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Equipo Uno", color: COLORES_EQUIPO[0], orden: 0, fichas: 3,
+           cartas: [ { titulo: "C1", artista: "X", anio: 1960 },
+                     { titulo: "Disputada", artista: "Y", anio: 1975 },
+                     { titulo: "C2", artista: "X", anio: 2000 } ], miembros: { [miId]: true } },
+    eq2: { id: "eq2", nombre: "Equipo Dos", color: COLORES_EQUIPO[1], orden: 1, fichas: 2,
+           cartas: [], miembros: {} },
+  },
+  usadas: {}, aportes: {}, ganador: null,
+  ronda: {
+    n: 1, equipoActivo: "eq1", subfase: "revelado",
+    colocacion: 1, robos: { eq2: 2 }, confirmada: true,
+    carta: { titulo: "Disputada", artista: "Y", anio: 1975 },
+    resultado: {
+      aciertoActivo: true, ganadorCarta: "eq1",
+      intentos: [{ equipo: "eq2", slot: 2, correcto: false }],
+      slotsValidos: [1],
+    },
+    esperandoBonus: false, siguientePedida: false, bonus: null, saltar: false, secreto: null,
+  },
+});
+await esperar(40);
+t("se ve la pantalla de revelado de la ronda fabricada", html().includes("ha acertado"));
+
+await clic('[data-accion="abrirAyuda"]', "Abrir el botón de ayuda (rectificación)");
+t("el botón de ayuda ofrece corregir el año", html().includes("Corregir el año"));
+await clic('[data-accion="corregirAnio"]', "¿Año equivocado? (rectificación)");
+document.getElementById("in-anio-correcto").value = "2010"; // el año real: va DESPUÉS de C2 (2000)
+await clic('[data-accion="guardarAnio"]', "Guardar año corregido (rectificación)");
+await esperar(40);
+
+const salaRectificada = fb._leer(`salas/${codigoRectifica}`);
+t("al equipo que la tenía mal (con el año viejo) se le quita la carta",
+  !salaRectificada.equipos.eq1.cartas.some((c) => c.titulo === "Disputada"));
+t("el equipo que había intentado robar y en realidad tenía razón se la queda",
+  salaRectificada.equipos.eq2.cartas.some((c) => c.titulo === "Disputada" && c.anio === 2010));
+t("el resultado de la ronda se rectifica: ya no acierta el equipo activo",
+  salaRectificada.ronda.resultado.aciertoActivo === false);
+t("el resultado de la ronda rectifica quién es el ganador",
+  salaRectificada.ronda.resultado.ganadorCarta === "eq2");
+t("la línea del equipo que pierde la carta sigue ordenada",
+  salaRectificada.equipos.eq1.cartas.every((c, i, a) => !i || c.anio >= a[i - 1].anio));
+
+fb._escribir(`salas/${codigoRectifica}`, null); // limpiar
+await esperar(30); // el listener detecta que la sala desapareció y vuelve al inicio
+t("al borrarse la sala fabricada, la app vuelve a la pantalla de inicio",
+  html().includes("Crear partida nueva"));
+
+// ------------------------------------------------------------
+//  Solo el líder de un equipo (quien lo creó) puede jugar los turnos; el
+//  resto de dispositivos de ese equipo solo pueden mirar y aportar Spotify.
+// ------------------------------------------------------------
+console.log("Comprobando que solo el líder del equipo puede jugar sus turnos…");
+const codigoLider = "8080";
+fb._escribir(`salas/${codigoLider}`, {
+  fase: "lobby", hostCliente: "otro-host-lider", config: { mazo: "famosas" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Equipo Ajeno", color: COLORES_EQUIPO[0], orden: 0,
+           lider: "el-lider-de-verdad", fichas: 3, cartas: [], miembros: { "el-lider-de-verdad": true } },
+  },
+  usadas: {}, aportes: {}, ronda: null, ganador: null,
+});
+await clic('[data-accion="irUnirse"]', "Unirse para probar permisos de líder");
+document.getElementById("in-codigo").value = codigoLider;
+await clic('[data-accion="buscarSala"]', "Buscar sala de permisos");
+await clic('[data-accion="unirmeEquipo"]', "Unirme a Equipo Ajeno (no soy el líder)");
+
+// Fabricamos una ronda en marcha para ese equipo, ya en pleno turno de colocar.
+fb._escribir(`salas/${codigoLider}`, {
+  fase: "jugando", hostCliente: "otro-host-lider", config: { mazo: "famosas" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Equipo Ajeno", color: COLORES_EQUIPO[0], orden: 0,
+           lider: "el-lider-de-verdad", fichas: 3, cartas: [],
+           miembros: { "el-lider-de-verdad": true, [miId]: true } },
+  },
+  usadas: {}, aportes: {}, ganador: null,
+  ronda: {
+    n: 1, equipoActivo: "eq1", subfase: "colocando",
+    limite: Date.now() + 60000, colocacion: null, confirmada: false,
+    robos: {}, turnoRobo: null, limiteRobo: 0,
+    secreto: Net.ocultar({ titulo: "Secreta", artista: "Y", anio: 2001 }, codigoLider),
+    carta: null, resultado: null, esperandoBonus: false, siguientePedida: false, saltar: false,
+  },
+});
+await esperar(40);
+t("como no soy el líder de mi equipo, no veo huecos para colocar la carta",
+  document.querySelectorAll('[data-accion="hueco"]').length === 0);
+t("se explica que solo quien creó el equipo puede colocar la carta",
+  html().includes("Solo quien creó el equipo puede colocar la carta"));
+
+await clic('[data-accion="abrirAyuda"]', "Abrir ayuda siendo no-líder");
+t("sin ser líder ni anfitrión, no puedo saltar gratis ni corregir el año desde aquí",
+  html().includes("Ahora mismo no hay nada que corregir"));
+await clic('[data-accion="cerrarModal"]', "Cerrar ayuda");
+
+await clic('[data-accion="salir"]', "Salir del equipo de prueba de permisos");
+fb._escribir(`salas/${codigoLider}`, null);
+await esperar(30);
+t("al borrarse la sala de permisos, la app vuelve a la pantalla de inicio",
+  html().includes("Crear partida nueva"));
 
 // ------------------------------------------------------------
 //  Ahora sí, la partida real de principio a fin.
@@ -239,10 +398,8 @@ for (const [i, nombre] of [[1, "Los Primos"], [2, "Los Peques"]]) {
 }
 await esperar(25);
 t("el lobby lista los tres equipos", html().includes("Los Primos") && html().includes("Los Peques"));
-
-await clic('[data-accion="buscarDispositivos"]', "Elegir altavoz");
-t("aparece el altavoz de Spotify", html().includes("Altavoz del salón"));
-await clic('[data-accion="elegirDispositivo"]', "Usar altavoz");
+t("ya no se pide elegir altavoz: se usa el dispositivo activo de Spotify por defecto",
+  !document.querySelector('[data-accion="buscarDispositivos"]'));
 
 await clic('[data-accion="empezar"]', "Empezar la partida");
 await esperar(120);
@@ -261,7 +418,8 @@ sinErrores("inicio de partida");
 // ------------------------------------------------------------
 const MI = "eq1";
 let vueltas = 0, rondasJugadas = 0, misTurnos = 0, filtraciones2 = 0,
-    revelados = 0, robosHechos = 0, saltosHechos = 0, filtraciones = 0, corregidoUnaVez = false;
+    revelados = 0, robosHechos = 0, saltosHechos = 0, saltosGratisHechos = 0,
+    filtraciones = 0, corregidoUnaVez = false;
 
 const rondasVistas = new Set();
 const est = () => fb._leer("salas/" + codigo);
@@ -290,6 +448,17 @@ while (est().fase === "jugando" && vueltas++ < 4000) {
         saltosHechos++;
         await clic('[data-accion="saltar"]', "Saltar canción");
         await esperar(20);
+        continue;
+      }
+      // Otra vez, probamos el salto gratis (canción rota/errónea) desde el
+      // botón de ayuda: no debe gastar fichas.
+      if (misTurnos === 2) {
+        const fichasAntes = E.equipos[MI].fichas;
+        await clic('[data-accion="abrirAyuda"]', "Abrir ayuda para saltar gratis");
+        await clic('[data-accion="saltarGratis"]', "Cambiar canción gratis");
+        await esperar(20);
+        saltosGratisHechos++;
+        t("saltar la canción gratis no gasta fichas", est().equipos[MI].fichas === fichasAntes);
         continue;
       }
       const huecos = [...document.querySelectorAll('[data-accion="hueco"]')];
@@ -348,24 +517,31 @@ while (est().fase === "jugando" && vueltas++ < 4000) {
     }
     t("la pantalla de revelado muestra el año", html().includes(String(carta.anio)));
 
-    // Una vez, comprobamos la corrección manual del año (por si Spotify se equivoca).
+    // Una vez, comprobamos que el botón de corregir el año funciona en plena
+    // partida (la rectificación de quién gana ya se comprueba a fondo, con un
+    // caso controlado, más arriba). Aquí solo miramos que no rompa nada.
     if (!corregidoUnaVez && res.ganadorCarta) {
       corregidoUnaVez = true;
-      const ganadorId = res.ganadorCarta;
       const anioNuevo = carta.anio === 1975 ? 1976 : 1975;
+      await clic('[data-accion="abrirAyuda"]', "Abrir el botón de ayuda");
       await clic('[data-accion="corregirAnio"]', "¿Año equivocado?");
       t("se abre el modal de corregir el año", html().includes("Corregir el año"));
       document.getElementById("in-anio-correcto").value = String(anioNuevo);
       await clic('[data-accion="guardarAnio"]', "Guardar año corregido");
       await esperar(40);
-      const trasCorregir = est().equipos[ganadorId].cartas
-        .find((c) => c.titulo === carta.titulo && c.artista === carta.artista);
-      t("el año corregido se guarda en la carta del equipo", trasCorregir?.anio === anioNuevo);
-      const aniosGanador = est().equipos[ganadorId].cartas.map((c) => c.anio);
-      t("la línea del equipo sigue ordenada tras la corrección",
-        aniosGanador.every((a, i) => !i || a >= aniosGanador[i - 1]));
-      t("corregir el año no deshace el resultado ya calculado de la ronda",
-        est().ronda.resultado.ganadorCarta === ganadorId);
+      sinErrores("tras corregir el año en plena partida");
+      // El resultado puede haber cambiado de dueño; comprobamos que, sea quien
+      // sea el ganador ahora, todas las líneas del tiempo siguen bien ordenadas
+      // y la canción disputada aparece en, como mucho, un único equipo.
+      const equiposTrasCorregir = est().equipos;
+      for (const eq of Object.values(equiposTrasCorregir)) {
+        const anios = eq.cartas.map((c) => c.anio);
+        t("cada línea del tiempo sigue ordenada tras corregir el año en plena partida",
+          anios.every((a, i) => !i || a >= anios[i - 1]));
+      }
+      const dueños = Object.values(equiposTrasCorregir)
+        .filter((eq) => eq.cartas.some((c) => c.titulo === carta.titulo && c.artista === carta.artista));
+      t("la canción corregida no queda duplicada en más de un equipo", dueños.length <= 1);
     }
 
     // Una vez, durante la partida, abrimos el panel de "Otros equipos".
@@ -421,6 +597,7 @@ t("ninguna canción se repite entre equipos", (() => {
 t("la carta boca abajo nunca filtró el título de la canción", filtraciones === 0);
 t("se ejercitó el robo al menos una vez", robosHechos > 0);
 t("se ejercitó el salto de canción", saltosHechos > 0);
+t("se ejercitó el salto gratis de canción", saltosGratisHechos > 0);
 t("se buscó cada canción en Spotify", llamadas.search > 10);
 t("se pausó la música al revelar", llamadas.pause >= revelados - 1);
 

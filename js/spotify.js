@@ -144,11 +144,6 @@ async function api(ruta, opciones = {}) {
 }
 
 export const perfil = () => api("/me");
-export const dispositivos = () => api("/me/player/devices").then((r) => r?.devices || []);
-
-export async function esPremium() {
-  try { return (await perfil()).product === "premium"; } catch { return false; }
-}
 
 const MALAS = /\b(karaoke|tribute|made famous by|in the style of|cover version|instrumental version)\b/i;
 
@@ -183,23 +178,20 @@ export async function buscarTrack(titulo, artista) {
   return null;
 }
 
-export async function reproducir(uri, deviceId) {
-  const q = deviceId ? `?device_id=${deviceId}` : "";
-  await api(`/me/player/play${q}`, {
+/**
+ * Reproduce en el dispositivo de Spotify que esté activo (el móvil o altavoz
+ * donde el anfitrión tenga Spotify abierto). No pedimos elegir dispositivo:
+ * es el comportamiento por defecto de Spotify Connect.
+ */
+export async function reproducir(uri) {
+  await api(`/me/player/play`, {
     method: "PUT",
     body: JSON.stringify({ uris: [uri], position_ms: 0 }),
   });
 }
 
-export async function pausar(deviceId) {
-  const q = deviceId ? `?device_id=${deviceId}` : "";
-  try { await api(`/me/player/pause${q}`, { method: "PUT" }); } catch { /* ya estaba parado */ }
-}
-
-export async function volumen(pct, deviceId) {
-  const q = new URLSearchParams({ volume_percent: String(Math.round(pct)) });
-  if (deviceId) q.set("device_id", deviceId);
-  try { await api(`/me/player/volume?${q}`, { method: "PUT" }); } catch {}
+export async function pausar() {
+  try { await api(`/me/player/pause`, { method: "PUT" }); } catch { /* ya estaba parado */ }
 }
 
 /**
@@ -257,41 +249,4 @@ export async function misCancionesFavoritas() {
   } catch { /* requiere el permiso playlist-read-private */ }
 
   return [...mapa.values()];
-}
-
-// ---------- Reproductor dentro del navegador (Web Playback SDK) ----------
-let reproductor = null;
-let idNavegador = null;
-
-export function deviceIdNavegador() { return idNavegador; }
-
-export function iniciarReproductorNavegador() {
-  return new Promise((resolve, reject) => {
-    if (idNavegador) return resolve(idNavegador);
-    const arranca = () => {
-      reproductor = new window.Spotify.Player({
-        name: "Hitster Familia",
-        getOAuthToken: (cb) => token().then(cb),
-        volume: 0.8,
-      });
-      reproductor.addListener("ready", ({ device_id }) => { idNavegador = device_id; resolve(device_id); });
-      reproductor.addListener("initialization_error", ({ message }) => reject(new Error(message)));
-      reproductor.addListener("authentication_error", ({ message }) => reject(new Error(message)));
-      reproductor.addListener("account_error", () =>
-        reject(new Error("Este reproductor necesita Spotify Premium.")));
-      reproductor.connect();
-    };
-    if (window.Spotify) return arranca();
-    window.onSpotifyWebPlaybackSDKReady = arranca;
-    const s = document.createElement("script");
-    s.src = "https://sdk.scdn.co/spotify-player.js";
-    s.onerror = () => reject(new Error("No se pudo cargar el reproductor de Spotify."));
-    document.head.appendChild(s);
-    setTimeout(() => { if (!idNavegador) reject(new Error("El reproductor tardó demasiado en arrancar.")); }, 15000);
-  });
-}
-
-/** iOS/iPadOS exige un toque del usuario antes de dejar sonar audio. */
-export async function desbloquearAudio() {
-  try { await reproductor?.activateElement?.(); } catch {}
 }

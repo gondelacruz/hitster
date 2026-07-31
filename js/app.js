@@ -21,11 +21,9 @@ const S = {
   error: null,
   info: null,
   ocupado: false,
-  modal: null,          // 'otros' | 'reglas' | 'equipo' | 'dispositivos' | 'corregirAnio'
+  modal: null,          // 'otros' | 'reglas' | 'equipo' | 'ayuda' | 'corregirAnio'
   modalEquipo: null,
   slot: null,           // hueco seleccionado (aún sin confirmar)
-  deviceId: null,
-  dispositivos: [],
   spotifyOk: false,
   previa: null,         // estado de la sala mientras eliges equipo (antes de unirte)
   aportando: false,
@@ -46,6 +44,29 @@ function cargarSesion() {
 const soyHost = () => !!E && E.hostCliente === S.clienteId;
 const miEquipo = () => (E?.equipos || {})[S.equipoId] || null;
 const equipoActivo = () => (E?.equipos || {})[E?.ronda?.equipoActivo] || null;
+
+// Dentro de un equipo con varios dispositivos, solo quien lo creó (el líder)
+// puede jugar los turnos: colocar cartas, robar, responder al bonus, avanzar
+// de ronda o corregir un año. El resto de dispositivos del equipo solo
+// pueden aportar sus canciones de Spotify. Si el equipo no tiene campo
+// `lider` (partidas creadas antes de esta función), lo dejamos abierto a
+// todos para no romper nada a medio jugar.
+const soyLiderEquipo = (eq) => !!eq && (!eq.lider || eq.lider === S.clienteId);
+const soyLiderDeMiEquipo = () => soyLiderEquipo(miEquipo());
+
+/** ¿Puedo abrir/guardar la corrección de año ahora mismo? */
+function puedeCorregirAnio() {
+  const r = E?.ronda;
+  if (!r || r.subfase !== "revelado" || !r.carta || r.siguientePedida) return false;
+  return soyHost() || (r.equipoActivo === S.equipoId && soyLiderDeMiEquipo());
+}
+
+/** ¿Puedo saltar la canción actual gratis (problema técnico/canción errónea)? */
+function puedeSaltarGratis() {
+  const r = E?.ronda;
+  if (!r || r.subfase !== "colocando" || r.saltar) return false;
+  return soyHost() || (r.equipoActivo === S.equipoId && soyLiderDeMiEquipo());
+}
 
 // ============================================================
 //  ARRANQUE
@@ -70,8 +91,6 @@ async function init() {
     await Sp.procesarVuelta();
   } catch (e) { S.error = e.message; }
   S.spotifyOk = Sp.haySesion();
-
-  S.deviceId = localStorage.getItem("hitster_dispositivo") || null;
 
   // ¿Estábamos en una partida? Volvemos a entrar.
   const volverA = sessionStorage.getItem("hitster_volver_a");
@@ -98,6 +117,7 @@ function entrarEnSala() {
   desuscribir?.();
   desuscribir = Net.escuchar(S.codigo, (estado) => {
     if (!estado) {                       // la sala ha desaparecido
+      desuscribir?.(); desuscribir = null;   // no dejar la suscripción colgada
       E = null; S.codigo = null; S.equipoId = null; S.vista = "inicio";
       S.error = "La partida se ha cerrado.";
       guardar(); return render();
@@ -127,16 +147,27 @@ function tic() {
 // ============================================================
 export const clave = (c) => `${c.titulo}|${c.artista}`.toLowerCase().replace(/[.#$/[\]]/g, "");
 
-/** Junta los aportes de Spotify de todos los dispositivos de la sala en un solo pool. */
+/**
+ * Junta los aportes de Spotify de todos los dispositivos de la sala en un
+ * solo pool. Normalizamos el peso de cada persona (dividimos entre su propio
+ * total) para que quien haya aportado muchas más canciones —más playlists,
+ * más historial— no acapare el mazo: cada persona "pesa" lo mismo en total,
+ * y dentro de su lista se respeta qué canciones le gustan más. Las canciones
+ * que varias personas tienen en común suman sus pesos normalizados y además
+ * cuentan cuánta gente las aportó, para priorizarlas después.
+ */
 export function poolComunitario(estado) {
-  const aportes = estado.aportes || {};
+  const aportes = Object.values(estado.aportes || {});
   const mapa = new Map();
-  for (const aporte of Object.values(aportes)) {
-    for (const c of aporte.canciones || []) {
+  for (const aporte of aportes) {
+    const canciones = aporte.canciones || [];
+    const totalPersona = canciones.reduce((s, c) => s + Math.max(1, c.peso || 1), 0) || 1;
+    for (const c of canciones) {
       const k = clave(c);
+      const pesoNorm = Math.max(1, c.peso || 1) / totalPersona;
       const actual = mapa.get(k);
-      if (actual) { actual.peso += c.peso || 1; actual.personas += 1; }
-      else mapa.set(k, { ...c, mazo: "top", peso: c.peso || 1, personas: 1 });
+      if (actual) { actual.peso += pesoNorm; actual.personas += 1; }
+      else mapa.set(k, { ...c, mazo: "top", peso: pesoNorm, personas: 1 });
     }
   }
   return [...mapa.values()];
@@ -149,23 +180,66 @@ export function resumenAportes(estado) {
   return { gente, comunes };
 }
 
+const TODAS_CURADAS = () => CANCIONES.map(([titulo, artista, anio, m]) => ({ titulo, artista, anio, mazo: m }));
+
+/**
+ * Cinco mazos posibles:
+ *  - "famosas": el mazo curado entero (español + inglés + algún otro idioma).
+ *  - "es": solo español y latino.
+ *  - "en": solo canciones en inglés (aprox.: el mazo internacional).
+ *  - "spotify": solo lo que aporten los jugadores con su Spotify.
+ *  - "todo": lo que aporten los jugadores + el mazo curado entero, mezclado.
+ */
 export function baraja(config, estado) {
-  let base = CANCIONES.map(([titulo, artista, anio, m]) => ({ titulo, artista, anio, mazo: m }));
-  if (config.mazo === "int") base = base.filter((c) => c.mazo === "int");
-  if (config.mazo === "es") base = base.filter((c) => c.mazo === "es");
-  if (config.mazo === "top") {
-    return { propias: poolComunitario(estado), curadas: base };
+  const todas = TODAS_CURADAS();
+  switch (config.mazo) {
+    case "es": return { propias: [], curadas: todas.filter((c) => c.mazo === "es") };
+    case "en": return { propias: [], curadas: todas.filter((c) => c.mazo === "int") };
+    case "spotify": return { propias: poolComunitario(estado), curadas: [] };
+    case "todo": return { propias: poolComunitario(estado), curadas: todas };
+    default: return { propias: [], curadas: todas }; // "famosas"
   }
-  return { propias: [], curadas: base };
 }
 
-/** Elige un elemento al azar dando más peso a los que tienen `peso`/`personas` más altos. */
+/**
+ * Elige un elemento al azar dando más peso a los que tienen `peso`/`personas`
+ * más altos. Ojo: los pesos del pool de Spotify ya vienen normalizados por
+ * persona (fracciones pequeñas), así que aquí no forzamos un mínimo de 1 —
+ * eso borraría esa normalización. Las canciones del mazo curado no traen
+ * `peso` y valen 1 cada una, como siempre.
+ */
 export function elegirPonderado(lista) {
-  const pesos = lista.map((c) => Math.max(1, c.peso || 1) * (c.personas > 1 ? 4 : 1));
+  const pesos = lista.map((c) => Math.max(0.0001, c.peso ?? 1) * (c.personas > 1 ? c.personas * 6 : 1));
   const total = pesos.reduce((a, b) => a + b, 0);
   let r = Math.random() * total;
   for (let i = 0; i < lista.length; i++) { r -= pesos[i]; if (r <= 0) return lista[i]; }
   return lista[lista.length - 1];
+}
+
+// El pool de Spotify de los jugadores suele estar cargado de música moderna
+// (es lo que más se escucha hoy). Para que la partida siga teniendo mezcla
+// de épocas, primero sorteamos la década —con el mismo criterio que el mazo
+// curado: poco peso antes de 1964, peso normal después— y solo luego, dentro
+// de esa década, priorizamos lo que varios jugadores tengan en común.
+const PESO_DECADA = { 1950: 1, 1960: 2 };
+const PESO_DECADA_NORMAL = 4;
+const decadaDe = (anio) => Math.floor(anio / 10) * 10;
+
+export function elegirPonderadoPorDecada(lista) {
+  if (!lista.length) return null;
+  const porDecada = new Map();
+  for (const c of lista) {
+    const d = decadaDe(c.anio);
+    if (!porDecada.has(d)) porDecada.set(d, []);
+    porDecada.get(d).push(c);
+  }
+  const decadas = [...porDecada.keys()];
+  const pesos = decadas.map((d) => PESO_DECADA[d] ?? PESO_DECADA_NORMAL);
+  const total = pesos.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  let elegida = decadas[decadas.length - 1];
+  for (let i = 0; i < decadas.length; i++) { r -= pesos[i]; if (r <= 0) { elegida = decadas[i]; break; } }
+  return elegirPonderado(porDecada.get(elegida));
 }
 
 export function sacarCancion(estado) {
@@ -177,7 +251,7 @@ export function sacarCancion(estado) {
   if (a.length && (!b.length || Math.random() < 0.6)) fuente = a;
   if (!fuente.length) fuente = a.length ? a : b;
   if (!fuente.length) return null;
-  return fuente === a ? elegirPonderado(fuente) : fuente[Math.floor(Math.random() * fuente.length)];
+  return fuente === a ? elegirPonderadoPorDecada(fuente) : fuente[Math.floor(Math.random() * fuente.length)];
 }
 
 /** Elige una canción y encuentra su URI en Spotify (reintenta si no la encuentra). */
@@ -261,7 +335,7 @@ async function motorPaso() {
     hecho.lanzada = r.n;
     const ganador = R.comprobarVictoria(E.equipos);
     if (ganador) {
-      await Sp.pausar(S.deviceId).catch(() => {});
+      await Sp.pausar().catch(() => {});
       return void (await Net.actualizar(S.codigo, { fase: "fin", ganador, ronda: null }));
     }
     return void (await nuevaRonda(R.siguienteEquipo(E.equipos, r.equipoActivo)));
@@ -278,7 +352,7 @@ async function resolver() {
   const carta = { titulo: secreto.titulo, artista: secreto.artista, anio: secreto.anio };
   const equipos = R.entregarCarta(res.equipos, res.ganadorCarta, carta);
 
-  await Sp.pausar(S.deviceId).catch(() => {});
+  await Sp.pausar().catch(() => {});
   await Net.actualizar(S.codigo, {
     equipos,
     "ronda/subfase": "revelado",
@@ -341,11 +415,11 @@ async function nuevaCancionEnRonda() {
 
 async function sonar(uri) {
   try {
-    await Sp.reproducir(uri, S.deviceId);
+    await Sp.reproducir(uri);
     S.error = null;
   } catch (e) {
     S.error = e.status === 404
-      ? "Spotify no encuentra un dispositivo activo. Abre Spotify en el móvil o altavoz y vuelve a elegirlo abajo."
+      ? "Spotify no encuentra ningún dispositivo activo. Abre Spotify en el móvil o el altavoz y dale a play un segundo para que se active."
       : "Spotify: " + e.message;
     render();
   }
@@ -371,7 +445,7 @@ const acciones = {
 
   async crearPartida() {
     const nombre = (document.getElementById("in-nombre")?.value || "").trim() || "Equipo 1";
-    const mazo = document.getElementById("in-mazo")?.value || "mixto";
+    const mazo = document.getElementById("in-mazo")?.value || "famosas";
     if (!Sp.haySesion()) { S.error = "Primero conecta tu cuenta de Spotify."; return; }
 
     let codigo;
@@ -384,7 +458,7 @@ const acciones = {
       config: { mazo },
       equipos: {
         [equipoId]: {
-          id: equipoId, nombre, color: COLORES_EQUIPO[0], orden: 0,
+          id: equipoId, nombre, color: COLORES_EQUIPO[0], orden: 0, lider: S.clienteId,
           fichas: AJUSTES.fichasIniciales, cartas: [], miembros: { [S.clienteId]: true },
         },
       },
@@ -425,7 +499,7 @@ const acciones = {
     const orden = equipos.length;
     const equipoId = "eq" + (orden + 1);
     await Net.escribir(S.codigo, `equipos/${equipoId}`, {
-      id: equipoId, nombre, color: COLORES_EQUIPO[orden], orden,
+      id: equipoId, nombre, color: COLORES_EQUIPO[orden], orden, lider: S.clienteId,
       fichas: AJUSTES.fichasIniciales, cartas: [], miembros: { [S.clienteId]: true },
     });
     S.equipoId = equipoId; S.previa = null; guardar(); entrarEnSala();
@@ -464,34 +538,12 @@ const acciones = {
   },
 
   // ----- reproducción (solo anfitrión) -----
-  async buscarDispositivos() {
-    S.dispositivos = await Sp.dispositivos();
-    S.modal = "dispositivos";
-  },
-  async usarNavegador() {
-    try {
-      S.info = "Arrancando el reproductor…"; render();
-      S.deviceId = await Sp.iniciarReproductorNavegador();
-      await Sp.desbloquearAudio();
-      S.info = null; S.modal = null;
-    } catch (e) { S.error = e.message; S.info = null; }
-  },
-  elegirDispositivo(el) {
-    S.deviceId = el.dataset.id;
-    localStorage.setItem("hitster_dispositivo", S.deviceId);
-    S.modal = null;
-  },
-  repetir() {
-    const secreto = Net.revelar(E?.ronda?.secreto, S.codigo);
-    if (secreto?.uri) sonar(secreto.uri);
-  },
-  pausar() { Sp.pausar(S.deviceId); },
+  pausar() { Sp.pausar(); },
 
   // ----- lobby -----
   async empezar() {
     const equipos = R.equiposEnOrden(E.equipos);
     if (equipos.length < 2) { S.error = "Hacen falta al menos 2 equipos."; return; }
-    if (!S.deviceId) { S.error = "Elige primero dónde suena la música."; return; }
 
     // Carta inicial para cada equipo.
     let usadas = { ...(E.usadas || {}) };
@@ -513,18 +565,20 @@ const acciones = {
     S.slot = Number(el.dataset.slot);
     // Durante la colocación guardamos la elección al momento: si se acaba el
     // tiempo, vale el último hueco tocado aunque no hayan pulsado Finalizar.
-    if (E?.ronda?.subfase === "colocando" && E.ronda.equipoActivo === S.equipoId) {
+    // Solo quien creó el equipo puede tocar esto (el resto solo mira).
+    if (E?.ronda?.subfase === "colocando" && E.ronda.equipoActivo === S.equipoId && soyLiderDeMiEquipo()) {
       Net.escribir(S.codigo, "ronda/colocacion", S.slot);
     }
   },
 
   finalizar() {
-    if (S.slot == null) return;
+    if (S.slot == null || !soyLiderDeMiEquipo()) return;
     Net.actualizar(S.codigo, { "ronda/colocacion": S.slot, "ronda/confirmada": true });
     S.slot = null;
   },
 
   saltar() {
+    if (!soyLiderDeMiEquipo()) return;
     const eq = miEquipo();
     if ((eq?.fichas || 0) < AJUSTES.fichasParaSaltar) return;
     Net.actualizar(S.codigo, {
@@ -534,8 +588,15 @@ const acciones = {
     S.slot = null;
   },
 
+  /** Saltar la canción actual sin gastar fichas (canción rota o equivocada). */
+  saltarGratis() {
+    if (!puedeSaltarGratis()) { S.modal = null; return; }
+    Net.escribir(S.codigo, "ronda/saltar", true);
+    S.slot = null; S.modal = null;
+  },
+
   async robar() {
-    if (S.slot == null) return;
+    if (S.slot == null || !soyLiderDeMiEquipo()) return;
     const slot = S.slot; S.slot = null;
     await Net.transaccion(S.codigo, "ronda/robos", (actual) => {
       const a = actual || {};
@@ -546,10 +607,14 @@ const acciones = {
     });
   },
 
-  pasarRobo() { Net.escribir(S.codigo, `ronda/robos/${S.equipoId}`, "pasa"); },
+  pasarRobo() {
+    if (!soyLiderDeMiEquipo()) return;
+    Net.escribir(S.codigo, `ronda/robos/${S.equipoId}`, "pasa");
+  },
 
   // ----- pregunta extra -----
   bonus(el) {
+    if (!soyLiderDeMiEquipo()) return;
     const acertaron = el.dataset.valor === "si";
     const eq = miEquipo();
     const cambios = { "ronda/esperandoBonus": false, "ronda/bonus": acertaron };
@@ -557,27 +622,87 @@ const acciones = {
     Net.actualizar(S.codigo, cambios);
   },
 
-  siguiente() { Net.escribir(S.codigo, "ronda/siguientePedida", true); },
+  siguiente() {
+    const puedeSeguir = (E?.ronda?.equipoActivo === S.equipoId && soyLiderDeMiEquipo()) || soyHost();
+    if (!puedeSeguir) return;
+    Net.escribir(S.codigo, "ronda/siguientePedida", true);
+  },
+
+  // ----- botón de ayuda (esquina) -----
+  abrirAyuda() { S.modal = "ayuda"; },
 
   // ----- corregir un año equivocado (Spotify a veces se equivoca con remasters) -----
-  corregirAnio() { S.modal = "corregirAnio"; },
+  corregirAnio() {
+    if (!puedeCorregirAnio()) return;
+    S.modal = "corregirAnio";
+  },
 
+  /**
+   * Corrige el año Y recalcula quién debería quedarse la carta con ese año
+   * correcto: si el equipo activo la tenía bien colocada, se rectifica y se
+   * la lleva él; si alguno de los que intentaron robar tenía razón, pasa a
+   * ser suya; si ya no la merece nadie, se la quitamos a quien la tuviera.
+   * No toca las fichas gastadas en intentar robar (eso no depende del año),
+   * pero si ya se había dado la ficha extra del bonus y ahora resulta que
+   * no acertaron el año, se la quitamos.
+   */
   async guardarAnio() {
+    if (!puedeCorregirAnio()) { S.modal = null; return; }
     const val = parseInt(document.getElementById("in-anio-correcto")?.value, 10);
     const max = new Date().getFullYear();
     if (!val || val < 1900 || val > max) { S.error = `Pon un año entre 1900 y ${max}.`; return; }
 
-    const eqId = E?.ronda?.resultado?.ganadorCarta;
-    const objetivo = E?.ronda?.carta;
-    if (!eqId || !objetivo) { S.modal = null; return; }
+    const r = E?.ronda;
+    const carta = r?.carta;
+    if (!r || !carta || !r.resultado) { S.modal = null; return; }
 
-    const corregidas = R.ordenar((E.equipos[eqId].cartas || []).map((c) =>
-      (c.titulo === objetivo.titulo && c.artista === objetivo.artista && c.anio === objetivo.anio)
-        ? { ...c, anio: val } : c));
+    const activoId = r.equipoActivo;
+    const viejoGanador = r.resultado.ganadorCarta;
+    const eqs = JSON.parse(JSON.stringify(E.equipos));
+
+    // 1. Quitamos la carta (con el año viejo) de donde esté ahora mismo.
+    if (viejoGanador && eqs[viejoGanador]) {
+      eqs[viejoGanador].cartas = (eqs[viejoGanador].cartas || []).filter((c) =>
+        !(c.titulo === carta.titulo && c.artista === carta.artista && c.anio === carta.anio));
+    }
+
+    // 2. Recalculamos con el año correcto, usando la misma colocación y los
+    //    mismos intentos de robo de antes (eso no cambia, solo el año).
+    const timelineActivo = R.ordenar(eqs[activoId]?.cartas || []);
+    const aciertoActivo = R.slotValido(timelineActivo, val, r.colocacion);
+    const intentos = [];
+    for (const [eqId, slot] of Object.entries(r.robos || {})) {
+      if (typeof slot !== "number") continue;
+      intentos.push({ equipo: eqId, slot, correcto: R.slotValido(timelineActivo, val, slot) });
+    }
+    let ganadorNuevo = null;
+    if (aciertoActivo) {
+      ganadorNuevo = activoId;
+    } else {
+      for (const eqId of R.ordenDeRobo(eqs, activoId)) {
+        if (intentos.find((i) => i.equipo === eqId && i.correcto)) { ganadorNuevo = eqId; break; }
+      }
+    }
+
+    // 3. Se la damos a quien corresponda con el año correcto.
+    const cartaCorregida = { titulo: carta.titulo, artista: carta.artista, anio: val };
+    const eqsFinal = R.entregarCarta(eqs, ganadorNuevo, cartaCorregida);
+
+    // 4. Si ya habían cobrado la ficha del bonus pero ahora no acertaron el año, se revoca.
+    if (r.bonus === true && !aciertoActivo && eqsFinal[activoId]) {
+      eqsFinal[activoId].fichas = Math.max(0, (eqsFinal[activoId].fichas || 0) - 1);
+    }
+
+    const bonusYaContestado = r.bonus !== undefined && r.bonus !== null;
 
     await Net.actualizar(S.codigo, {
-      [`equipos/${eqId}/cartas`]: corregidas,
+      equipos: eqsFinal,
       "ronda/carta/anio": val,
+      "ronda/resultado/aciertoActivo": aciertoActivo,
+      "ronda/resultado/ganadorCarta": ganadorNuevo,
+      "ronda/resultado/intentos": intentos,
+      "ronda/resultado/slotsValidos": R.slotsValidos(timelineActivo, val),
+      "ronda/esperandoBonus": aciertoActivo && !bonusYaContestado,
     });
     S.modal = null;
   },
@@ -660,15 +785,16 @@ function vistaCrear() {
       <input id="in-nombre" maxlength="18" placeholder="Los Campeones" />
       <label for="in-mazo">Mazo de canciones</label>
       <select id="in-mazo">
-        <option value="mixto">Mixto — internacional + español/latino (recomendado)</option>
-        <option value="int">Solo internacional</option>
-        <option value="es">Solo español y latino</option>
-        <option value="top">Nuestras canciones — mezcla lo que aporte cada dispositivo</option>
+        <option value="famosas">Canciones famosas (recomendado)</option>
+        <option value="es">Solo en español y latino</option>
+        <option value="en">Solo en inglés</option>
+        <option value="spotify">Canciones de Spotify de los jugadores</option>
+        <option value="todo">Todo — Spotify de los jugadores + famosas</option>
       </select>
-      <p class="mini" style="margin-top:10px">En «Nuestras canciones», cualquiera que se una a la partida puede
-        conectar su Spotify y aportar sus canciones favoritas (lo verás en la sala de espera). Se priorizan las
-        que varias personas tengáis en común. Algunos años pueden fallar por remasterizaciones: si veis uno mal,
-        podréis corregirlo en el momento.</p>
+      <p class="mini" style="margin-top:10px">En «Spotify de los jugadores» y en «Todo», cualquiera que se una
+        puede conectar su Spotify y aportar sus canciones favoritas (lo verás en la sala de espera). Se
+        priorizan las que varias personas tengáis en común, mezclando también épocas distintas. Algunos años
+        pueden fallar por remasterizaciones: si veis uno mal, podréis corregirlo en el momento.</p>
       <div style="height:16px"></div>
       <button class="grande" data-accion="crearPartida" ${S.spotifyOk ? "" : "disabled"}>Crear partida</button>
       <div style="height:10px"></div>
@@ -714,7 +840,8 @@ function vistaUnirseEquipo() {
         <button class="grande" data-accion="crearEquipoNuevo">Crear este equipo</button>
       </div>`}
     <p class="mini centro">Elige "Unirme aquí" si otro familiar ya creó vuestro equipo desde su propio
-      móvil o iPad: jugaréis juntos, como un solo equipo, cada uno desde su dispositivo.</p>
+      móvil o iPad: jugaréis juntos, como un solo equipo, cada uno desde su dispositivo. Eso sí, solo
+      quien creó el equipo puede jugar los turnos; el resto podéis aportar vuestras canciones de Spotify.</p>
     <button class="grande sec" data-accion="volverInicio">Volver</button>`;
 }
 
@@ -740,17 +867,22 @@ function vistaLobby() {
       <h3>Equipos (${equipos.length}/${AJUSTES.maxEquipos})</h3>
       ${equipos.map((e) => {
         const conectados = Object.values(e.miembros || {}).filter(Boolean).length;
+        const soyDeEste = e.id === S.equipoId;
+        const etiqueta = soyDeEste ? ` <span class='mini'>(tú${soyLiderEquipo(e) ? ", líder" : ""})</span>` : "";
         return `
         <div class="equipo-fila">
           <span class="punto" style="background:${esc(e.color.hex)}"></span>
-          <span class="nombre">${esc(e.nombre)}${e.id === S.equipoId ? " <span class='mini'>(tú)</span>" : ""}</span>
+          <span class="nombre">${esc(e.nombre)}${etiqueta}</span>
           ${conectados > 1 ? `<span class="pastilla">${conectados} dispositivos</span>` : ""}
         </div>`;
       }).join("")}
       ${equipos.length < 2 ? '<p class="mini" style="margin-top:12px">Esperando a que entre algún equipo más…</p>' : ""}
+      ${miEquipo() && !soyLiderDeMiEquipo() ? `
+        <p class="mini" style="margin-top:12px">Solo quien creó vuestro equipo puede jugar los turnos.
+          Vosotros podéis aportar canciones de Spotify y animar 🙂</p>` : ""}
     </div>
 
-    ${E.config?.mazo === "top" ? `
+    ${["spotify", "todo"].includes(E.config?.mazo) ? `
       <div class="tarjeta">
         <h3>Nuestras canciones</h3>
         <p class="mini">${gente
@@ -763,15 +895,9 @@ function vistaLobby() {
       </div>` : ""}
 
     ${host ? `
-      <div class="tarjeta">
-        <h3>¿Dónde suena la música?</h3>
-        <p class="mini">${S.deviceId ? "Dispositivo elegido." : "Elige un altavoz o reproduce en este navegador."}</p>
-        <div class="fila">
-          <button class="sec" data-accion="buscarDispositivos">Elegir altavoz de Spotify</button>
-          <button class="sec" data-accion="usarNavegador">Sonar en este dispositivo</button>
-        </div>
-      </div>
-      <button class="grande" data-accion="empezar" ${equipos.length >= 2 && S.deviceId ? "" : "disabled"}>
+      <div class="aviso info">Antes de empezar, abre Spotify en el móvil o altavoz donde queréis que
+        suene la música y dale a reproducir algo un segundo (así queda como dispositivo activo).</div>
+      <button class="grande" data-accion="empezar" ${equipos.length >= 2 ? "" : "disabled"}>
         Empezar la partida
       </button>
       <div style="height:10px"></div>` : `
@@ -800,9 +926,7 @@ function controlesMusica() {
   if (!soyHost()) return "";
   return `
     <div class="fila" style="margin-top:12px">
-      <button class="sec" data-accion="repetir">Volver a poner la canción</button>
       <button class="sec" data-accion="pausar">Pausar</button>
-      <button class="sec" data-accion="buscarDispositivos">Cambiar altavoz</button>
     </div>`;
 }
 
@@ -813,9 +937,14 @@ function vistaJuego() {
   const soyActivo = r.equipoActivo === S.equipoId;
   const timeline = R.ordenar(activo.cartas || []);
 
-  if (r.subfase === "colocando") return barraSuperior() + faseColocando(r, activo, soyActivo, timeline);
-  if (r.subfase === "robando")   return barraSuperior() + faseRobando(r, activo, soyActivo, timeline);
-  return barraSuperior() + faseRevelado(r, activo, soyActivo, timeline);
+  if (r.subfase === "colocando") return barraSuperior() + faseColocando(r, activo, soyActivo, timeline) + botonAyuda();
+  if (r.subfase === "robando")   return barraSuperior() + faseRobando(r, activo, soyActivo, timeline) + botonAyuda();
+  return barraSuperior() + faseRevelado(r, activo, soyActivo, timeline) + botonAyuda();
+}
+
+/** Botón flotante en la esquina: corregir el año o saltar una canción con problemas. */
+function botonAyuda() {
+  return `<button class="ayuda-flotante" data-accion="abrirAyuda" aria-label="Ayuda">?</button>`;
 }
 
 function faseColocando(r, activo, soyActivo, timeline) {
@@ -837,8 +966,9 @@ function faseColocando(r, activo, soyActivo, timeline) {
       </div>`;
   }
 
-  const elegibles = new Set(Array.from({ length: timeline.length + 1 }, (_, i) => i));
-  const puedeSaltar = (mio.fichas || 0) >= AJUSTES.fichasParaSaltar;
+  const soyLider = soyLiderDeMiEquipo();
+  const elegibles = soyLider ? new Set(Array.from({ length: timeline.length + 1 }, (_, i) => i)) : new Set();
+  const puedeSaltar = soyLider && (mio.fichas || 0) >= AJUSTES.fichasParaSaltar;
   return `
     <div class="tarjeta centro">
       <h2>¡Os toca!</h2>
@@ -850,21 +980,25 @@ function faseColocando(r, activo, soyActivo, timeline) {
     <div class="tarjeta">
       <h3>Vuestra línea del tiempo</h3>
       ${htmlLinea(timeline, { elegibles, elegido: S.slot })}
-      <div class="fila" style="margin-top:8px">
-        <button data-accion="finalizar" ${S.slot == null ? "disabled" : ""}>Finalizar</button>
-        <button class="sec" data-accion="saltar" ${puedeSaltar ? "" : "disabled"}>
-          Saltar canción (${AJUSTES.fichasParaSaltar} fichas)
-        </button>
-      </div>
-      ${S.slot == null ? '<p class="mini" style="margin-top:10px">Toca uno de los huecos con «+».</p>' : ""}
+      ${soyLider ? `
+        <div class="fila" style="margin-top:8px">
+          <button data-accion="finalizar" ${S.slot == null ? "disabled" : ""}>Finalizar</button>
+          <button class="sec" data-accion="saltar" ${puedeSaltar ? "" : "disabled"}>
+            Saltar canción (${AJUSTES.fichasParaSaltar} fichas)
+          </button>
+        </div>
+        ${S.slot == null ? '<p class="mini" style="margin-top:10px">Toca uno de los huecos con «+».</p>' : ""}`
+      : '<p class="mini" style="margin-top:10px">Solo quien creó el equipo puede colocar la carta. Los demás podéis animar y opinar 🙂</p>'}
     </div>`;
 }
 
 function faseRobando(r, activo, soyActivo, timeline) {
   const mio = miEquipo();
+  const soyLider = soyLiderDeMiEquipo();
   const robos = r.robos || {};
   const meToca = r.turnoRobo === S.equipoId;
   const yaElegi = robos[S.equipoId] !== undefined;
+  const puedoDecidir = meToca && !yaElegi && soyLider;
 
   const marcas = {};
   if (r.colocacion != null) {
@@ -876,7 +1010,7 @@ function faseRobando(r, activo, soyActivo, timeline) {
   }
 
   const ocupados = R.slotsOcupados(r);
-  const elegibles = meToca && !yaElegi && (mio.fichas || 0) >= 1
+  const elegibles = puedoDecidir && (mio.fichas || 0) >= 1
     ? new Set(Array.from({ length: timeline.length + 1 }, (_, i) => i).filter((i) => !ocupados.has(i)))
     : null;
 
@@ -890,6 +1024,9 @@ function faseRobando(r, activo, soyActivo, timeline) {
     panel = `<h2>Ya está colocada</h2>
              <p>Ahora los demás equipos pueden intentar robaros la carta si creen que os habéis equivocado.</p>
              ${enTurno ? `<p>Le toca decidir a <b>${esc(enTurno.nombre)}</b>.</p>` : ""}`;
+  } else if (meToca && !yaElegi && !soyLider) {
+    panel = `<h2>¡Os toca decidir!</h2>
+             <p>Le toca a vuestro equipo, pero solo quien creó el equipo puede decidir si robar o pasar.</p>`;
   } else if (meToca && !yaElegi) {
     panel = `<h2>¿Se han equivocado?</h2>
              <p>Si creéis que la canción va en otro hueco, poned una ficha ahí. Si acertáis, la carta es vuestra.</p>
@@ -900,7 +1037,7 @@ function faseRobando(r, activo, soyActivo, timeline) {
     panel = `<h2>Turno de robo</h2><p>Le toca decidir a <b>${esc(enTurno?.nombre || "…")}</b>.</p>`;
   }
 
-  const botones = meToca && !yaElegi ? `
+  const botones = puedoDecidir ? `
     <div class="fila" style="margin-top:8px">
       <button data-accion="robar" ${S.slot == null || (mio.fichas || 0) < 1 ? "disabled" : ""}>
         Robar en este hueco
@@ -941,7 +1078,8 @@ function faseRevelado(r, activo, soyActivo, timeline) {
   else if (ganador)      { titular = `${esc(activo.nombre)} falló — <b>${esc(ganador.nombre)}</b> roba la carta`; clase = "info"; }
   else                   { titular = `${esc(activo.nombre)} falló y nadie ha robado la carta`; clase = "malo"; }
 
-  const bonus = r.esperandoBonus && soyActivo ? `
+  const soyLiderActivo = soyActivo && soyLiderDeMiEquipo();
+  const bonus = r.esperandoBonus && soyLiderActivo ? `
     <div class="tarjeta centro">
       <h2>¿Habéis acertado también el artista y el nombre de la canción?</h2>
       <p class="mini">Sed honestos. Si sí, ganáis una ficha (máximo ${AJUSTES.fichasMaximas}).</p>
@@ -951,10 +1089,12 @@ function faseRevelado(r, activo, soyActivo, timeline) {
       </div>
     </div>` : "";
 
-  const esperandoOtros = r.esperandoBonus && !soyActivo
-    ? aviso("info", `${esc(activo.nombre)} está respondiendo a la pregunta del artista y el título…`) : "";
+  const esperandoOtros = r.esperandoBonus && !soyLiderActivo
+    ? aviso("info", soyActivo
+        ? "Esperando a que quien creó vuestro equipo responda la pregunta del artista y el título…"
+        : `${esc(activo.nombre)} está respondiendo a la pregunta del artista y el título…`) : "";
 
-  const puedeSeguir = soyActivo || soyHost();
+  const puedeSeguir = soyLiderActivo || soyHost();
   const siguiente = !r.esperandoBonus ? `
     ${r.bonus === true ? aviso("ok", `${esc(activo.nombre)} también acertó artista y título: +1 ficha.`) : ""}
     ${puedeSeguir
@@ -962,18 +1102,10 @@ function faseRevelado(r, activo, soyActivo, timeline) {
            ${r.siguientePedida ? "Preparando…" : "Siguiente ronda"}</button>`
       : aviso("info", "Esperando a que continúen…")}` : "";
 
-  const corregir = ganador && !r.siguientePedida ? `
-    <div class="centro" style="margin-top:8px">
-      <button class="sec" style="padding:8px 16px;min-height:auto;font-size:13px" data-accion="corregirAnio">
-        ¿Año equivocado? Corregir
-      </button>
-    </div>` : "";
-
   return `
     <div class="tarjeta centro">
       ${aviso(clase, titular)}
       <div style="max-width:210px;margin:0 auto">${htmlCarta(carta)}</div>
-      ${corregir}
     </div>
     <div class="tarjeta">
       <h3>Línea del tiempo de ${esc(activo.nombre)}</h3>
@@ -1018,27 +1150,29 @@ function modal() {
       <p><b>Fichas:</b> empezáis con ${AJUSTES.fichasIniciales} (máximo ${AJUSTES.fichasMaximas}).
          Si acertáis el año y además el artista y el título, ganáis una.
          Podéis gastar ${AJUSTES.fichasParaSaltar} para saltar una canción que no conocéis.</p>
+      <p><b>Equipos con varios dispositivos:</b> todo el que se une a un equipo puede aportar sus canciones
+         de Spotify, pero solo quien lo creó juega los turnos.</p>
+      <p><b>El botón "?"</b> de la esquina sirve para corregir un año equivocado de Spotify o para cambiar
+         una canción rota/errónea sin gastar fichas.</p>
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
   }
 
-  if (S.modal === "dispositivos") {
+  if (S.modal === "ayuda") {
+    const puedeSaltar = puedeSaltarGratis();
+    const puedeCorregir = puedeCorregirAnio();
     cuerpo = `
-      <h2>¿Dónde suena la música?</h2>
-      <p class="mini">Abre Spotify en el móvil, el ordenador o el altavoz y ponlo a sonar un segundo
-         para que aparezca aquí.</p>
-      ${S.dispositivos.length
-        ? S.dispositivos.map((d) => `
-            <div class="equipo-fila">
-              <span class="nombre">${esc(d.name)} <span class="mini">${esc(d.type)}</span></span>
-              <button class="sec" style="padding:9px 18px;min-height:auto"
-                      data-accion="elegirDispositivo" data-id="${esc(d.id)}">Usar</button>
-            </div>`).join("")
-        : '<p>No he encontrado ningún dispositivo de Spotify activo.</p>'}
-      <div style="height:12px"></div>
-      <button class="grande sec" data-accion="usarNavegador">Sonar en este dispositivo</button>
-      <div style="height:8px"></div>
-      <button class="grande sec" data-accion="buscarDispositivos">Buscar otra vez</button>
-      <div style="height:8px"></div>
+      <h2>¿Algún problema con esta canción?</h2>
+      ${puedeSaltar ? `
+        <p class="mini">¿Ha sonado una canción rota, repetida o que claramente no es la que tocaba?
+          Podéis cambiarla sin gastar fichas.</p>
+        <button class="grande sec" data-accion="saltarGratis">Cambiar esta canción (gratis)</button>
+        <div style="height:14px"></div>` : ""}
+      ${puedeCorregir ? `
+        <p class="mini">¿Spotify ha puesto un año equivocado (remasterización, recopilatorio…)?</p>
+        <button class="grande sec" data-accion="corregirAnio">Corregir el año</button>
+        <div style="height:14px"></div>` : ""}
+      ${!puedeSaltar && !puedeCorregir
+        ? '<p class="mini">Ahora mismo no hay nada que corregir. Vuelve a mirar aquí si suena una canción rota o el año no cuadra.</p>' : ""}
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
   }
 
@@ -1046,8 +1180,9 @@ function modal() {
     const actual = E?.ronda?.carta?.anio || "";
     cuerpo = `
       <h2>Corregir el año</h2>
-      <p class="mini">A veces Spotify se equivoca (remasterizaciones, recopilatorios…). Esto solo corrige
-        el año para que valga a partir de ahora; no cambia el resultado de esta ronda.</p>
+      <p class="mini">A veces Spotify se equivoca (remasterizaciones, recopilatorios…). Con el año correcto,
+        la app recalcula quién acertó: si cambia quién tenía razón, la carta pasará al equipo que
+        correspondía.</p>
       <label for="in-anio-correcto">Año correcto</label>
       <input id="in-anio-correcto" inputmode="numeric" type="number" min="1900" max="${new Date().getFullYear()}"
              value="${esc(actual)}" style="text-align:center;font-size:28px;font-weight:800" />
