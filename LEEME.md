@@ -142,8 +142,10 @@ Sirve para que los iPads se vean entre ellos en tiempo real. Es gratis.
    (**Elegir altavoz de Spotify**), o el propio navegador (**Sonar en este dispositivo**).
 5. Cuando estén todos, pulsa **Empezar la partida**.
 
-**Los demás equipos**: abren la misma web → **Unirme con un código** → escriben el código y su nombre.
-No necesitan Spotify ni cuenta de nada.
+**Los demás equipos**: abren la misma web → **Unirme con un código** → escriben el código. Después eligen
+si se **unen a un equipo que ya existe** (por ejemplo, si otro familiar ya creó "Los Abuelos" desde su
+propio móvil y quieren jugar juntos desde varios dispositivos) o si **crean un equipo nuevo**. No necesitan
+Spotify ni cuenta de nada para jugar.
 
 ### Las reglas
 
@@ -161,6 +163,11 @@ No necesitan Spotify ni cuenta de nada.
 
 El botón **Otros equipos** enseña las cartas de los demás en cualquier momento.
 
+Si en el momento de revelar la carta veis que **el año no es el correcto** (pasa a veces con
+reediciones o remasterizaciones), pulsad **¿Año equivocado? Corregir** justo debajo de la carta y
+escribid el año real. No cambia el resultado de esa ronda (ya jugada), solo corrige el dato para
+que valga a partir de ahora.
+
 ---
 
 ## Los mazos
@@ -170,7 +177,25 @@ El botón **Otros equipos** enseña las cartas de los demás en cualquier moment
 | **Mixto** | 707 canciones de 1950 a hoy, internacionales y en español. Es el recomendado. |
 | **Solo internacional** | 478 canciones. |
 | **Solo español y latino** | 229 canciones: Mecano, Serrat, Héroes, Estopa, Soda Stereo, Rosalía, Bad Bunny… |
-| **Nuestras canciones** | Mezcla tus más escuchadas de Spotify con el mazo curado. |
+| **Nuestras canciones** | Combina las canciones favoritas de todos los que se conecten. |
+
+### Nuestras canciones: cómo funciona
+
+Cualquier dispositivo (el anfitrión o cualquiera que se una) puede pulsar, en la sala de espera,
+**Añadir mis canciones de Spotify**. Cada uno conecta su propia cuenta desde su propio móvil —no hace
+falta que todos usen la de Premium del anfitrión, esto solo lee sus canciones favoritas—. La app
+combina lo que aporte cada persona y **prioriza las canciones que varios tengáis en común**: si tú y
+tu hermano tenéis la misma canción en el top, es mucho más probable que salga que una que solo
+escucháis vosotros dos por separado.
+
+Para acertar mejor con lo que de verdad te gusta, cada aportación mezcla varias fuentes de Spotify:
+tu top de los últimos años, tu top de los últimos 6 meses, tus canciones con "Me gusta" y las
+canciones de tus propias playlists (no las que sigues de otra gente). Se descarta a propósito el
+"top de las últimas 4 semanas" de Spotify, que mezcla escuchas puntuales recientes con tus favoritas
+de toda la vida.
+
+La primera vez que uses esta función, Spotify te pedirá permiso otra vez (para leer tus canciones
+guardadas y tus playlists). Es normal, acepta y ya está.
 
 Los años del mazo curado están puestos a mano y comprobados: son el año de lanzamiento original,
 no el del disco remasterizado. Por eso la app **nunca** usa el año que da Spotify.

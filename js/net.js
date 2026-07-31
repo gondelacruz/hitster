@@ -58,9 +58,13 @@ export function transaccion(codigo, ruta, fn) {
   return runTransaction(ref(db, `salas/${codigo}/${ruta}`), fn);
 }
 
-/** Marca a un equipo como desconectado si cierra la pestaña. */
-export function marcarPresencia(codigo, equipoId) {
-  const r = ref(db, `salas/${codigo}/equipos/${equipoId}/conectado`);
+/**
+ * Marca este dispositivo como miembro conectado de un equipo (varios
+ * dispositivos pueden compartir el mismo equipo). Si cierra la pestaña,
+ * queda marcado como desconectado, pero no se borra: puede volver a entrar.
+ */
+export function marcarPresencia(codigo, equipoId, clienteId) {
+  const r = ref(db, `salas/${codigo}/equipos/${equipoId}/miembros/${clienteId}`);
   set(r, true);
   onDisconnect(r).set(false);
 }

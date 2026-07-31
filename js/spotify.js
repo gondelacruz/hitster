@@ -11,6 +11,8 @@ const SCOPES = [
   "user-modify-playback-state",
   "streaming",
   "user-top-read",
+  "user-library-read",
+  "playlist-read-private",
 ].join(" ");
 
 const LS = "hitster_spotify_token";
@@ -200,29 +202,61 @@ export async function volumen(pct, deviceId) {
   try { await api(`/me/player/volume?${q}`, { method: "PUT" }); } catch {}
 }
 
-/** Canciones más escuchadas del usuario (para el mazo "Nuestras canciones"). */
-export async function topTracks() {
-  const out = [];
-  for (const rango of ["long_term", "medium_term", "short_term"]) {
+/**
+ * Canciones favoritas del dueño de esta sesión, para el mazo "Nuestras canciones".
+ * Combina varias fuentes con distinto peso (cuantas más señales de que de verdad
+ * le gusta la canción, más probable que salga en la partida):
+ *   - top tracks de largo plazo (varios años de historial): peso 3
+ *   - top tracks de medio plazo (~6 meses): peso 2
+ *   - canciones guardadas ("Me gusta"): peso 2
+ *   - canciones de sus propias playlists: peso 1
+ * Se descarta a propósito el "top" de corto plazo (últimas 4 semanas): mezcla
+ * escuchas puntuales recientes con los favoritos de verdad.
+ */
+export async function misCancionesFavoritas() {
+  const mapa = new Map(); // uri -> {titulo, artista, anio, uri, peso}
+
+  const sumar = (t, peso) => {
+    const anio = parseInt((t.album?.release_date || "").slice(0, 4), 10);
+    if (!anio || !t.uri) return;
+    const actual = mapa.get(t.uri);
+    if (actual) { actual.peso += peso; return; }
+    mapa.set(t.uri, {
+      titulo: t.name,
+      artista: t.artists.map((a) => a.name).join(", "),
+      anio, uri: t.uri, peso,
+    });
+  };
+
+  for (const [rango, peso] of [["long_term", 3], ["medium_term", 2]]) {
     for (const offset of [0, 49]) {
       try {
         const r = await api(`/me/top/tracks?limit=50&offset=${offset}&time_range=${rango}`);
-        for (const t of r?.items || []) {
-          const anio = parseInt((t.album?.release_date || "").slice(0, 4), 10);
-          if (!anio) continue;
-          out.push({
-            titulo: t.name,
-            artista: t.artists.map((a) => a.name).join(", "),
-            anio,
-            uri: t.uri,
-            mazo: "top",
-          });
-        }
-      } catch { /* algún rango puede venir vacío */ }
+        for (const t of r?.items || []) sumar(t, peso);
+      } catch { /* puede no tener suficiente historial en ese rango */ }
     }
   }
-  const vistos = new Set();
-  return out.filter((c) => !vistos.has(c.uri) && vistos.add(c.uri));
+
+  try {
+    for (const offset of [0, 50]) {
+      const r = await api(`/me/tracks?limit=50&offset=${offset}`);
+      for (const it of r?.items || []) if (it.track) sumar(it.track, 2);
+    }
+  } catch { /* requiere el permiso user-library-read */ }
+
+  try {
+    const perfilActual = await perfil();
+    const listas = await api(`/me/playlists?limit=50`);
+    const propias = (listas?.items || []).filter((p) => p.owner?.id === perfilActual.id).slice(0, 15);
+    for (const p of propias) {
+      try {
+        const r = await api(`/playlists/${p.id}/tracks?limit=50&fields=items(track(name,uri,artists(name),album(release_date)))`);
+        for (const it of r?.items || []) if (it.track) sumar(it.track, 1);
+      } catch { /* alguna playlist puede fallar (colaborativa, borrada…) */ }
+    }
+  } catch { /* requiere el permiso playlist-read-private */ }
+
+  return [...mapa.values()];
 }
 
 // ---------- Reproductor dentro del navegador (Web Playback SDK) ----------

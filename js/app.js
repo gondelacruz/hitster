@@ -21,14 +21,14 @@ const S = {
   error: null,
   info: null,
   ocupado: false,
-  modal: null,          // 'otros' | 'reglas' | 'equipo'
+  modal: null,          // 'otros' | 'reglas' | 'equipo' | 'dispositivos' | 'corregirAnio'
   modalEquipo: null,
   slot: null,           // hueco seleccionado (aún sin confirmar)
   deviceId: null,
   dispositivos: [],
   spotifyOk: false,
-  topCargadas: [],
-  ultimaBusqueda: null, // {titulo, artista, nombreReal}
+  previa: null,         // estado de la sala mientras eliges equipo (antes de unirte)
+  aportando: false,
 };
 let E = null;           // estado de la sala (compartido)
 let desuscribir = null;
@@ -71,18 +71,22 @@ async function init() {
   } catch (e) { S.error = e.message; }
   S.spotifyOk = Sp.haySesion();
 
-  // Al volver del login de Spotify, seguimos donde lo dejamos.
-  if (sessionStorage.getItem("hitster_volver_a") === "crear" && S.spotifyOk) {
-    sessionStorage.removeItem("hitster_volver_a");
-    S.vista = "crear";
-  }
   S.deviceId = localStorage.getItem("hitster_dispositivo") || null;
 
   // ¿Estábamos en una partida? Volvemos a entrar.
+  const volverA = sessionStorage.getItem("hitster_volver_a");
   if (sesion.codigo && sesion.equipoId && await Net.existeSala(sesion.codigo)) {
     S.codigo = sesion.codigo;
     S.equipoId = sesion.equipoId;
     entrarEnSala();
+    // Al volver del login de Spotify a mitad de partida, aportamos solos.
+    if (volverA === "aportar" && S.spotifyOk) {
+      sessionStorage.removeItem("hitster_volver_a");
+      acciones.aportarSpotify();
+    }
+  } else if (volverA === "crear" && S.spotifyOk) {
+    sessionStorage.removeItem("hitster_volver_a");
+    S.vista = "crear";
   }
   guardar();
   render();
@@ -102,7 +106,7 @@ function entrarEnSala() {
     if (soyHost()) motor();
     render();
   });
-  Net.marcarPresencia(S.codigo, S.equipoId);
+  Net.marcarPresencia(S.codigo, S.equipoId, S.clienteId);
 }
 
 /** Latido: refresca el cronómetro y deja que el anfitrión avance por tiempo. */
@@ -121,21 +125,51 @@ function tic() {
 // ============================================================
 //  MAZO
 // ============================================================
-const clave = (c) => `${c.titulo}|${c.artista}`.toLowerCase().replace(/[.#$/[\]]/g, "");
+export const clave = (c) => `${c.titulo}|${c.artista}`.toLowerCase().replace(/[.#$/[\]]/g, "");
 
-function baraja(config) {
+/** Junta los aportes de Spotify de todos los dispositivos de la sala en un solo pool. */
+export function poolComunitario(estado) {
+  const aportes = estado.aportes || {};
+  const mapa = new Map();
+  for (const aporte of Object.values(aportes)) {
+    for (const c of aporte.canciones || []) {
+      const k = clave(c);
+      const actual = mapa.get(k);
+      if (actual) { actual.peso += c.peso || 1; actual.personas += 1; }
+      else mapa.set(k, { ...c, mazo: "top", peso: c.peso || 1, personas: 1 });
+    }
+  }
+  return [...mapa.values()];
+}
+
+/** Resumen para mostrar en el lobby: cuánta gente ha aportado y cuántas coinciden. */
+export function resumenAportes(estado) {
+  const gente = Object.keys(estado.aportes || {}).length;
+  const comunes = poolComunitario(estado).filter((c) => c.personas > 1).length;
+  return { gente, comunes };
+}
+
+export function baraja(config, estado) {
   let base = CANCIONES.map(([titulo, artista, anio, m]) => ({ titulo, artista, anio, mazo: m }));
   if (config.mazo === "int") base = base.filter((c) => c.mazo === "int");
   if (config.mazo === "es") base = base.filter((c) => c.mazo === "es");
-  if (config.mazo === "top" && S.topCargadas.length) {
-    // Mezcla: las tuyas pesan más, pero seguimos cubriendo toda la línea temporal.
-    return { propias: S.topCargadas, curadas: base };
+  if (config.mazo === "top") {
+    return { propias: poolComunitario(estado), curadas: base };
   }
   return { propias: [], curadas: base };
 }
 
-function sacarCancion(estado) {
-  const { propias, curadas } = baraja(estado.config);
+/** Elige un elemento al azar dando más peso a los que tienen `peso`/`personas` más altos. */
+export function elegirPonderado(lista) {
+  const pesos = lista.map((c) => Math.max(1, c.peso || 1) * (c.personas > 1 ? 4 : 1));
+  const total = pesos.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < lista.length; i++) { r -= pesos[i]; if (r <= 0) return lista[i]; }
+  return lista[lista.length - 1];
+}
+
+export function sacarCancion(estado) {
+  const { propias, curadas } = baraja(estado.config, estado);
   const usadas = estado.usadas || {};
   const libres = (l) => l.filter((c) => !usadas[clave(c)]);
   const a = libres(propias), b = libres(curadas);
@@ -143,7 +177,7 @@ function sacarCancion(estado) {
   if (a.length && (!b.length || Math.random() < 0.6)) fuente = a;
   if (!fuente.length) fuente = a.length ? a : b;
   if (!fuente.length) return null;
-  return fuente[Math.floor(Math.random() * fuente.length)];
+  return fuente === a ? elegirPonderado(fuente) : fuente[Math.floor(Math.random() * fuente.length)];
 }
 
 /** Elige una canción y encuentra su URI en Spotify (reintenta si no la encuentra). */
@@ -324,7 +358,7 @@ const acciones = {
   // ----- pantallas iniciales -----
   irCrear: () => { S.vista = "crear"; S.error = null; },
   irUnirse: () => { S.vista = "unirse"; S.error = null; },
-  volverInicio: () => { S.vista = "inicio"; S.error = null; },
+  volverInicio: () => { S.vista = "inicio"; S.previa = null; S.error = null; },
   verReglas: () => { S.modal = "reglas"; },
   cerrarModal: () => { S.modal = null; S.modalEquipo = null; },
 
@@ -340,13 +374,6 @@ const acciones = {
     const mazo = document.getElementById("in-mazo")?.value || "mixto";
     if (!Sp.haySesion()) { S.error = "Primero conecta tu cuenta de Spotify."; return; }
 
-    if (mazo === "top") {
-      S.info = "Cargando tus canciones más escuchadas…"; render();
-      try { S.topCargadas = await Sp.topTracks(); } catch { S.topCargadas = []; }
-      S.info = null;
-      if (!S.topCargadas.length) S.error = "No he podido leer tus canciones más escuchadas; se usará el mazo curado.";
-    }
-
     let codigo;
     do { codigo = R.generarCodigo(); } while (await Net.existeSala(codigo));
 
@@ -358,42 +385,82 @@ const acciones = {
       equipos: {
         [equipoId]: {
           id: equipoId, nombre, color: COLORES_EQUIPO[0], orden: 0,
-          fichas: AJUSTES.fichasIniciales, cartas: [], clienteId: S.clienteId, conectado: true,
+          fichas: AJUSTES.fichasIniciales, cartas: [], miembros: { [S.clienteId]: true },
         },
       },
-      usadas: {}, ronda: null, ganador: null,
+      usadas: {}, aportes: {}, ronda: null, ganador: null,
     });
     S.codigo = codigo; S.equipoId = equipoId; guardar(); entrarEnSala();
   },
 
-  async unirsePartida() {
+  /** Paso 1 al unirse: solo el código, para ver qué equipos hay ya. */
+  async buscarSala() {
     const codigo = (document.getElementById("in-codigo")?.value || "").trim();
-    const nombre = (document.getElementById("in-nombre")?.value || "").trim();
     if (!/^\d{4}$/.test(codigo)) { S.error = "El código son 4 dígitos."; return; }
-    if (!nombre) { S.error = "Pon un nombre a tu equipo."; return; }
 
     const estado = await Net.leerSala(codigo);
     if (!estado) { S.error = "No existe ninguna partida con ese código."; return; }
     if (estado.fase !== "lobby") { S.error = "Esa partida ya ha empezado."; return; }
 
+    S.codigo = codigo; S.previa = estado; S.vista = "unirseEquipo";
+  },
+
+  /** Unirse a un equipo que ya existe (otro dispositivo de la misma familia). */
+  async unirmeEquipo(el) {
+    const equipoId = el.dataset.id;
+    await Net.escribir(S.codigo, `equipos/${equipoId}/miembros/${S.clienteId}`, true);
+    S.equipoId = equipoId; S.previa = null; guardar(); entrarEnSala();
+  },
+
+  /** Crear un equipo nuevo dentro de una partida ya existente. */
+  async crearEquipoNuevo() {
+    const nombre = (document.getElementById("in-nombre-equipo")?.value || "").trim();
+    if (!nombre) { S.error = "Pon un nombre a vuestro equipo."; return; }
+
+    const estado = await Net.leerSala(S.codigo);
+    if (!estado) { S.error = "La partida ha dejado de existir."; S.vista = "unirse"; S.previa = null; return; }
     const equipos = Object.values(estado.equipos || {});
     if (equipos.length >= AJUSTES.maxEquipos) { S.error = "La partida ya tiene 4 equipos."; return; }
 
     const orden = equipos.length;
     const equipoId = "eq" + (orden + 1);
-    await Net.escribir(codigo, `equipos/${equipoId}`, {
+    await Net.escribir(S.codigo, `equipos/${equipoId}`, {
       id: equipoId, nombre, color: COLORES_EQUIPO[orden], orden,
-      fichas: AJUSTES.fichasIniciales, cartas: [], clienteId: S.clienteId, conectado: true,
+      fichas: AJUSTES.fichasIniciales, cartas: [], miembros: { [S.clienteId]: true },
     });
-    S.codigo = codigo; S.equipoId = equipoId; guardar(); entrarEnSala();
+    S.equipoId = equipoId; S.previa = null; guardar(); entrarEnSala();
   },
 
   async salir() {
     if (!confirm("¿Seguro que quieres salir de la partida?")) return;
-    if (soyHost()) await Net.borrarSala(S.codigo);
-    else await Net.escribir(S.codigo, `equipos/${S.equipoId}`, null);
+    if (soyHost()) {
+      await Net.borrarSala(S.codigo);
+    } else {
+      const eq = miEquipo();
+      const otros = Object.keys(eq?.miembros || {}).filter((id) => id !== S.clienteId);
+      if (otros.length) await Net.escribir(S.codigo, `equipos/${S.equipoId}/miembros/${S.clienteId}`, null);
+      else await Net.escribir(S.codigo, `equipos/${S.equipoId}`, null);
+    }
     desuscribir?.(); desuscribir = null;
     E = null; S.codigo = null; S.equipoId = null; S.vista = "inicio"; guardar();
+  },
+
+  // ----- aportar canciones de Spotify (cualquier dispositivo, en cualquier momento) -----
+  async aportarSpotify() {
+    if (!Sp.haySesion()) {
+      sessionStorage.setItem("hitster_volver_a", "aportar");
+      return Sp.iniciarLogin();
+    }
+    S.aportando = true; S.info = "Leyendo tus canciones de Spotify (esto puede tardar un poco)…"; render();
+    try {
+      const canciones = await Sp.misCancionesFavoritas();
+      const nombre = miEquipo()?.nombre || "Alguien";
+      await Net.escribir(S.codigo, `aportes/${S.clienteId}`, { nombre, canciones });
+      if (!canciones.length) S.error = "No he encontrado canciones tuyas en Spotify (¿tienes suficiente historial?).";
+    } catch (e) {
+      S.error = "Spotify: " + e.message;
+    }
+    S.aportando = false; S.info = null;
   },
 
   // ----- reproducción (solo anfitrión) -----
@@ -492,6 +559,29 @@ const acciones = {
 
   siguiente() { Net.escribir(S.codigo, "ronda/siguientePedida", true); },
 
+  // ----- corregir un año equivocado (Spotify a veces se equivoca con remasters) -----
+  corregirAnio() { S.modal = "corregirAnio"; },
+
+  async guardarAnio() {
+    const val = parseInt(document.getElementById("in-anio-correcto")?.value, 10);
+    const max = new Date().getFullYear();
+    if (!val || val < 1900 || val > max) { S.error = `Pon un año entre 1900 y ${max}.`; return; }
+
+    const eqId = E?.ronda?.resultado?.ganadorCarta;
+    const objetivo = E?.ronda?.carta;
+    if (!eqId || !objetivo) { S.modal = null; return; }
+
+    const corregidas = R.ordenar((E.equipos[eqId].cartas || []).map((c) =>
+      (c.titulo === objetivo.titulo && c.artista === objetivo.artista && c.anio === objetivo.anio)
+        ? { ...c, anio: val } : c));
+
+    await Net.actualizar(S.codigo, {
+      [`equipos/${eqId}/cartas`]: corregidas,
+      "ronda/carta/anio": val,
+    });
+    S.modal = null;
+  },
+
   // ----- ver otros equipos -----
   verOtros() {
     const otros = R.equiposEnOrden(E.equipos).filter((e) => e.id !== S.equipoId);
@@ -527,6 +617,7 @@ function render() {
   if (S.vista === "sala" && E) html = vistaSala();
   else if (S.vista === "crear") html = vistaCrear();
   else if (S.vista === "unirse") html = vistaUnirse();
+  else if (S.vista === "unirseEquipo") html = vistaUnirseEquipo();
   else html = vistaInicio();
 
   app.innerHTML = (S.error ? aviso("error", esc(S.error)) : "")
@@ -572,10 +663,12 @@ function vistaCrear() {
         <option value="mixto">Mixto — internacional + español/latino (recomendado)</option>
         <option value="int">Solo internacional</option>
         <option value="es">Solo español y latino</option>
-        <option value="top">Nuestras canciones — mezcla tus más escuchadas de Spotify</option>
+        <option value="top">Nuestras canciones — mezcla lo que aporte cada dispositivo</option>
       </select>
-      <p class="mini" style="margin-top:10px">En el modo «Nuestras canciones» algunos años pueden fallar:
-        Spotify da el año del álbum, y en remasterizaciones o recopilatorios no coincide con el original.</p>
+      <p class="mini" style="margin-top:10px">En «Nuestras canciones», cualquiera que se una a la partida puede
+        conectar su Spotify y aportar sus canciones favoritas (lo verás en la sala de espera). Se priorizan las
+        que varias personas tengáis en común. Algunos años pueden fallar por remasterizaciones: si veis uno mal,
+        podréis corregirlo en el momento.</p>
       <div style="height:16px"></div>
       <button class="grande" data-accion="crearPartida" ${S.spotifyOk ? "" : "disabled"}>Crear partida</button>
       <div style="height:10px"></div>
@@ -589,14 +682,40 @@ function vistaUnirse() {
       <label for="in-codigo">Código de la partida</label>
       <input id="in-codigo" inputmode="numeric" maxlength="4" placeholder="1234"
              style="text-align:center;font-size:34px;letter-spacing:.3em;font-weight:800" />
-      <label for="in-nombre">Nombre de tu equipo</label>
-      <input id="in-nombre" maxlength="18" placeholder="Los Primos" />
       <div style="height:16px"></div>
-      <button class="grande" data-accion="unirsePartida">Entrar</button>
+      <button class="grande" data-accion="buscarSala">Continuar</button>
       <div style="height:10px"></div>
       <button class="grande sec" data-accion="volverInicio">Volver</button>
     </div>
-    <p class="mini centro">No necesitas Spotify: la música la pone el anfitrión.</p>`;
+    <p class="mini centro">No necesitas Spotify para jugar: la música la pone el anfitrión.</p>`;
+}
+
+function vistaUnirseEquipo() {
+  const equipos = R.equiposEnOrden(S.previa?.equipos || {});
+  const lleno = equipos.length >= AJUSTES.maxEquipos;
+  return cabecera("¿con quién jugáis?") + `
+    <div class="tarjeta">
+      <h3>Equipos ya en la partida ${esc(S.codigo)}</h3>
+      ${equipos.length ? equipos.map((e) => `
+        <div class="equipo-fila">
+          <span class="punto" style="background:${esc(e.color.hex)}"></span>
+          <span class="nombre">${esc(e.nombre)}</span>
+          <button class="sec" style="padding:9px 18px;min-height:auto" data-accion="unirmeEquipo" data-id="${esc(e.id)}">
+            Unirme aquí
+          </button>
+        </div>`).join("") : '<p class="mini">Todavía no hay ningún equipo.</p>'}
+    </div>
+    ${lleno ? "" : `
+      <div class="tarjeta">
+        <h3>O crear un equipo nuevo</h3>
+        <label for="in-nombre-equipo">Nombre de vuestro equipo</label>
+        <input id="in-nombre-equipo" maxlength="18" placeholder="Los Primos" />
+        <div style="height:12px"></div>
+        <button class="grande" data-accion="crearEquipoNuevo">Crear este equipo</button>
+      </div>`}
+    <p class="mini centro">Elige "Unirme aquí" si otro familiar ya creó vuestro equipo desde su propio
+      móvil o iPad: jugaréis juntos, como un solo equipo, cada uno desde su dispositivo.</p>
+    <button class="grande sec" data-accion="volverInicio">Volver</button>`;
 }
 
 // ---------- sala ----------
@@ -609,6 +728,7 @@ function vistaSala() {
 function vistaLobby() {
   const equipos = R.equiposEnOrden(E.equipos);
   const host = soyHost();
+  const { gente, comunes } = resumenAportes(E);
   return `
     <div class="tarjeta centro">
       <h3>Código de la partida</h3>
@@ -618,14 +738,29 @@ function vistaLobby() {
 
     <div class="tarjeta">
       <h3>Equipos (${equipos.length}/${AJUSTES.maxEquipos})</h3>
-      ${equipos.map((e) => `
+      ${equipos.map((e) => {
+        const conectados = Object.values(e.miembros || {}).filter(Boolean).length;
+        return `
         <div class="equipo-fila">
           <span class="punto" style="background:${esc(e.color.hex)}"></span>
           <span class="nombre">${esc(e.nombre)}${e.id === S.equipoId ? " <span class='mini'>(tú)</span>" : ""}</span>
-          ${e.clienteId === E.hostCliente ? '<span class="pastilla">anfitrión</span>' : ""}
-        </div>`).join("")}
+          ${conectados > 1 ? `<span class="pastilla">${conectados} dispositivos</span>` : ""}
+        </div>`;
+      }).join("")}
       ${equipos.length < 2 ? '<p class="mini" style="margin-top:12px">Esperando a que entre algún equipo más…</p>' : ""}
     </div>
+
+    ${E.config?.mazo === "top" ? `
+      <div class="tarjeta">
+        <h3>Nuestras canciones</h3>
+        <p class="mini">${gente
+          ? `${gente} persona${gente === 1 ? "" : "s"} ${gente === 1 ? "ha" : "han"} aportado sus canciones`
+            + (comunes ? ` · ${comunes} en común` : "")
+          : "Nadie ha aportado canciones todavía."}</p>
+        <button class="grande sec" data-accion="aportarSpotify" ${S.aportando ? "disabled" : ""}>
+          ${Sp.haySesion() ? "Añadir mis canciones de Spotify" : "Conectar mi Spotify y aportar mis canciones"}
+        </button>
+      </div>` : ""}
 
     ${host ? `
       <div class="tarjeta">
@@ -827,10 +962,18 @@ function faseRevelado(r, activo, soyActivo, timeline) {
            ${r.siguientePedida ? "Preparando…" : "Siguiente ronda"}</button>`
       : aviso("info", "Esperando a que continúen…")}` : "";
 
+  const corregir = ganador && !r.siguientePedida ? `
+    <div class="centro" style="margin-top:8px">
+      <button class="sec" style="padding:8px 16px;min-height:auto;font-size:13px" data-accion="corregirAnio">
+        ¿Año equivocado? Corregir
+      </button>
+    </div>` : "";
+
   return `
     <div class="tarjeta centro">
       ${aviso(clase, titular)}
       <div style="max-width:210px;margin:0 auto">${htmlCarta(carta)}</div>
+      ${corregir}
     </div>
     <div class="tarjeta">
       <h3>Línea del tiempo de ${esc(activo.nombre)}</h3>
@@ -897,6 +1040,22 @@ function modal() {
       <button class="grande sec" data-accion="buscarDispositivos">Buscar otra vez</button>
       <div style="height:8px"></div>
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
+  }
+
+  if (S.modal === "corregirAnio") {
+    const actual = E?.ronda?.carta?.anio || "";
+    cuerpo = `
+      <h2>Corregir el año</h2>
+      <p class="mini">A veces Spotify se equivoca (remasterizaciones, recopilatorios…). Esto solo corrige
+        el año para que valga a partir de ahora; no cambia el resultado de esta ronda.</p>
+      <label for="in-anio-correcto">Año correcto</label>
+      <input id="in-anio-correcto" inputmode="numeric" type="number" min="1900" max="${new Date().getFullYear()}"
+             value="${esc(actual)}" style="text-align:center;font-size:28px;font-weight:800" />
+      <div style="height:12px"></div>
+      <div class="fila">
+        <button data-accion="guardarAnio">Guardar</button>
+        <button class="sec" data-accion="cerrarModal">Cancelar</button>
+      </div>`;
   }
 
   if (S.modal === "otros") {
