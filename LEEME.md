@@ -213,13 +213,17 @@ muchísimas más canciones que otro (más historial, más playlists), no acapara
 Así, con dos personas, no debería salir casi todo de una sola.
 
 Para acertar mejor con lo que de verdad te gusta, cada aportación mezcla varias fuentes de Spotify:
-tu top de los últimos años, tu top de los últimos 6 meses, tus canciones con "Me gusta" y las
-canciones de tus propias playlists (no las que sigues de otra gente). Se descarta a propósito el
-"top de las últimas 4 semanas" de Spotify, que mezcla escuchas puntuales recientes con tus favoritas
-de toda la vida.
+tu top de los últimos años, tu top de los últimos 6 meses, lo que has **escuchado recientemente**,
+tus canciones con "Me gusta" y las canciones de tus propias playlists (no las que sigues de otra
+gente). Se descarta a propósito el "top de las últimas 4 semanas" de Spotify (para eso ya está lo de
+"escuchado recientemente", que es más directo).
 
-La primera vez que uses esta función, Spotify te pedirá permiso otra vez (para leer tus canciones
-guardadas y tus playlists). Es normal, acepta y ya está.
+La primera vez que conectes tu Spotify para aportar canciones, te pedirá permiso para leer tu
+biblioteca, tus playlists y tu actividad reciente. Es normal, acepta y ya está. Si conectaste tu
+Spotify **antes** de que existieran estos permisos (por ejemplo, si ya jugasteis con una versión
+anterior de la app), al pulsar "Añadir mis canciones de Spotify" la app se dará cuenta de que faltan
+permisos y te llevará otra vez a la pantalla de Spotify para dártelos — no hace falta hacer nada
+especial, solo aceptar de nuevo.
 
 El top personal de todo el mundo suele estar lleno de música actual (es lo que más se escucha).
 Para que la partida no se quede solo en canciones de los últimos años, la app sortea primero la
@@ -259,6 +263,7 @@ inglés»). Añade las que quieras al final de la lista, antes del `];`.
 | Los demás equipos no ven la partida | Revisa que `databaseURL` esté en `config.js` y que publicaste las reglas de Firebase. |
 | Se cerró la pestaña del anfitrión | Volved a entrar en la web: la partida se recupera sola. Si el anfitrión sale con el botón **Salir**, la partida se borra. |
 | Un familiar no puede colocar la carta ni robar | Es normal si no fue quien creó ese equipo: solo el líder del equipo juega los turnos. El resto puede aportar canciones de Spotify y mirar. |
+| «No he encontrado canciones tuyas en Spotify» aunque sí tenga historial | Si ya tenía la sesión conectada de antes, probablemente le faltan permisos nuevos (biblioteca, playlists, reproducciones recientes). Vuelve a pulsar el botón: la app detecta esto sola y le lleva otra vez a la pantalla de Spotify para darlos. |
 
 ---
 

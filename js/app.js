@@ -521,7 +521,11 @@ const acciones = {
 
   // ----- aportar canciones de Spotify (cualquier dispositivo, en cualquier momento) -----
   async aportarSpotify() {
-    if (!Sp.haySesion()) {
+    // Si nunca se conectó, o se conectó antes de que pidiéramos permiso para
+    // leer canciones guardadas/playlists/reproducidas recientemente, hay que
+    // (re)conectar para que Spotify pida esos permisos.
+    if (!Sp.haySesion() || Sp.faltanPermisos()) {
+      Sp.cerrarSesion();
       sessionStorage.setItem("hitster_volver_a", "aportar");
       return Sp.iniciarLogin();
     }
@@ -532,7 +536,16 @@ const acciones = {
       await Net.escribir(S.codigo, `aportes/${S.clienteId}`, { nombre, canciones });
       if (!canciones.length) S.error = "No he encontrado canciones tuyas en Spotify (¿tienes suficiente historial?).";
     } catch (e) {
-      S.error = "Spotify: " + e.message;
+      if (e.tipo === "permisos") {
+        // Le faltaban permisos y no lo detectamos antes (p.ej. los revocó a
+        // mano en Spotify). Limpiamos la sesión para que el próximo toque
+        // vuelva a pedirlos.
+        Sp.cerrarSesion();
+        S.error = "A tu Spotify le faltan permisos para leer canciones guardadas, playlists o "
+          + "reproducciones recientes. Vuelve a pulsar el botón para reconectar y darlos.";
+      } else {
+        S.error = "Spotify: " + e.message;
+      }
     }
     S.aportando = false; S.info = null;
   },
@@ -890,7 +903,7 @@ function vistaLobby() {
             + (comunes ? ` · ${comunes} en común` : "")
           : "Nadie ha aportado canciones todavía."}</p>
         <button class="grande sec" data-accion="aportarSpotify" ${S.aportando ? "disabled" : ""}>
-          ${Sp.haySesion() ? "Añadir mis canciones de Spotify" : "Conectar mi Spotify y aportar mis canciones"}
+          ${Sp.haySesion() && !Sp.faltanPermisos() ? "Añadir mis canciones de Spotify" : "Conectar mi Spotify y aportar mis canciones"}
         </button>
       </div>` : ""}
 

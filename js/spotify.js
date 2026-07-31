@@ -4,7 +4,7 @@
 // ============================================================
 import { SPOTIFY_CLIENT_ID } from "./config.js";
 
-const SCOPES = [
+export const SCOPES = [
   "user-read-private",
   "user-read-email",
   "user-read-playback-state",
@@ -13,7 +13,13 @@ const SCOPES = [
   "user-top-read",
   "user-library-read",
   "playlist-read-private",
+  "user-read-recently-played",
 ].join(" ");
+
+// Permisos que hacen falta específicamente para "Nuestras canciones". Si
+// alguien conectó su Spotify antes de que existieran (o alguno se ha
+// revocado), su sesión guardada no los tendrá y hay que reconectar.
+const SCOPES_APORTAR = ["user-library-read", "playlist-read-private", "user-read-recently-played"];
 
 const LS = "hitster_spotify_token";
 
@@ -86,6 +92,9 @@ function guardarToken(data) {
     access_token: data.access_token,
     refresh_token: data.refresh_token || actual.refresh_token,
     expira: Date.now() + (data.expires_in - 60) * 1000,
+    // Spotify solo manda "scope" al autorizar (no siempre al refrescar), así
+    // que si no viene, conservamos el que ya teníamos guardado.
+    alcance: data.scope || actual.alcance || "",
   }));
 }
 
@@ -96,6 +105,20 @@ function leerToken() {
 export function haySesion() {
   const t = leerToken();
   return !!(t && t.refresh_token);
+}
+
+/**
+ * ¿A esta sesión le faltan permisos para leer canciones guardadas, playlists
+ * o reproducciones recientes? Pasa con cuentas que conectaron Spotify antes
+ * de que pidiéramos estos permisos: hay que reconectar para que Spotify los
+ * vuelva a pedir (no hace falta tocar nada del lado de Spotify, solo volver
+ * a iniciar sesión desde la app).
+ */
+export function faltanPermisos() {
+  const t = leerToken();
+  if (!t) return true;
+  const concedidos = (t.alcance || "").split(" ").filter(Boolean);
+  return SCOPES_APORTAR.some((s) => !concedidos.includes(s));
 }
 
 export function cerrarSesion() {
@@ -197,16 +220,28 @@ export async function pausar() {
 /**
  * Canciones favoritas del dueño de esta sesión, para el mazo "Nuestras canciones".
  * Combina varias fuentes con distinto peso (cuantas más señales de que de verdad
- * le gusta la canción, más probable que salga en la partida):
+ * le gusta o la ha escuchado, más probable que salga en la partida):
  *   - top tracks de largo plazo (varios años de historial): peso 3
  *   - top tracks de medio plazo (~6 meses): peso 2
+ *   - reproducidas recientemente (las últimas ~50): peso 2
  *   - canciones guardadas ("Me gusta"): peso 2
  *   - canciones de sus propias playlists: peso 1
  * Se descarta a propósito el "top" de corto plazo (últimas 4 semanas): mezcla
- * escuchas puntuales recientes con los favoritos de verdad.
+ * escuchas puntuales recientes con los favoritos de verdad (para eso ya está
+ * lo de "reproducidas recientemente", que es más literal).
+ *
+ * Si el resultado sale vacío porque a la sesión le faltan permisos (cuenta
+ * conectada antes de pedir estos permisos, o alguno revocado a mano), lo
+ * decimos con un error distinguible (`e.tipo === "permisos"`) en vez de
+ * devolver una lista vacía sin más: así la app puede pedir reconectar en
+ * lugar de decir "no tienes historial" cuando el problema es otro.
  */
 export async function misCancionesFavoritas() {
   const mapa = new Map(); // uri -> {titulo, artista, anio, uri, peso}
+  let huboErrorDePermisos = false;
+  const marcarSiEsPermiso = (e) => {
+    if (e?.status === 401 || e?.status === 403) huboErrorDePermisos = true;
+  };
 
   const sumar = (t, peso) => {
     const anio = parseInt((t.album?.release_date || "").slice(0, 4), 10);
@@ -225,16 +260,21 @@ export async function misCancionesFavoritas() {
       try {
         const r = await api(`/me/top/tracks?limit=50&offset=${offset}&time_range=${rango}`);
         for (const t of r?.items || []) sumar(t, peso);
-      } catch { /* puede no tener suficiente historial en ese rango */ }
+      } catch (e) { marcarSiEsPermiso(e); /* puede no tener suficiente historial en ese rango */ }
     }
   }
+
+  try {
+    const r = await api(`/me/player/recently-played?limit=50`);
+    for (const it of r?.items || []) if (it.track) sumar(it.track, 2);
+  } catch (e) { marcarSiEsPermiso(e); /* requiere el permiso user-read-recently-played */ }
 
   try {
     for (const offset of [0, 50]) {
       const r = await api(`/me/tracks?limit=50&offset=${offset}`);
       for (const it of r?.items || []) if (it.track) sumar(it.track, 2);
     }
-  } catch { /* requiere el permiso user-library-read */ }
+  } catch (e) { marcarSiEsPermiso(e); /* requiere el permiso user-library-read */ }
 
   try {
     const perfilActual = await perfil();
@@ -244,9 +284,15 @@ export async function misCancionesFavoritas() {
       try {
         const r = await api(`/playlists/${p.id}/tracks?limit=50&fields=items(track(name,uri,artists(name),album(release_date)))`);
         for (const it of r?.items || []) if (it.track) sumar(it.track, 1);
-      } catch { /* alguna playlist puede fallar (colaborativa, borrada…) */ }
+      } catch (e) { marcarSiEsPermiso(e); /* alguna playlist puede fallar (colaborativa, borrada…) */ }
     }
-  } catch { /* requiere el permiso playlist-read-private */ }
+  } catch (e) { marcarSiEsPermiso(e); /* requiere el permiso playlist-read-private */ }
 
-  return [...mapa.values()];
+  const resultado = [...mapa.values()];
+  if (!resultado.length && huboErrorDePermisos) {
+    const err = new Error("Faltan permisos de Spotify (canciones guardadas, playlists o recientes).");
+    err.tipo = "permisos";
+    throw err;
+  }
+  return resultado;
 }
