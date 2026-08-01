@@ -113,20 +113,52 @@ async function init() {
   } else if (volverA === "crear" && S.spotifyOk) {
     sessionStorage.removeItem("hitster_volver_a");
     S.vista = "crear";
+  } else {
+    // ¿Alguien ha abierto un enlace directo a una partida (compartido por
+    // otro jugador, o guardado como marcador de esta)? Saltamos derecho a
+    // elegir equipo con ese código ya puesto, sin que haga falta teclearlo.
+    const codigoUrl = new URLSearchParams(location.search).get("codigo");
+    if (codigoUrl && /^\d{4}$/.test(codigoUrl)) await entrarPorCodigo(codigoUrl);
   }
   guardar();
   render();
   setInterval(tic, 300);
 }
 
+/**
+ * Refleja el código de la partida en la URL (?codigo=1234), sin recargar la
+ * página. Así cada partida tiene una dirección propia: se puede compartir o
+ * guardar como marcador, y da una forma de "escapar" de una pantalla rara
+ * sin tener que borrar todo el historial del navegador — basta con volver
+ * a la URL base. No usamos una ruta tipo /1234 porque GitHub Pages no sabe
+ * servir esa URL si alguien la abre directamente (daría 404).
+ */
+function sincronizarUrl(codigo) {
+  const url = new URL(location.href);
+  if (codigo) url.searchParams.set("codigo", codigo);
+  else url.searchParams.delete("codigo");
+  history.replaceState(null, "", url.pathname + url.search);
+}
+
+/** Comprueba un código de sala y, si existe y sigue en el lobby, prepara la pantalla de elegir equipo. */
+async function entrarPorCodigo(codigo) {
+  if (!/^\d{4}$/.test(codigo)) { S.error = "El código son 4 dígitos."; return; }
+  const estado = await Net.leerSala(codigo);
+  if (!estado) { S.error = "No existe ninguna partida con ese código."; return; }
+  if (estado.fase !== "lobby") { S.error = "Esa partida ya ha empezado."; return; }
+  S.codigo = codigo; S.previa = estado; S.vista = "unirseEquipo";
+}
+
 function entrarEnSala() {
   S.vista = "sala";
+  sincronizarUrl(S.codigo);
   desuscribir?.();
   desuscribir = Net.escuchar(S.codigo, (estado) => {
     if (!estado) {                       // la sala ha desaparecido
       desuscribir?.(); desuscribir = null;   // no dejar la suscripción colgada
       E = null; S.codigo = null; S.equipoId = null; S.vista = "inicio";
       S.error = "La partida se ha cerrado.";
+      sincronizarUrl(null);
       guardar(); return render();
     }
     E = estado;
@@ -236,19 +268,21 @@ export function baraja(config, estado) {
 }
 
 /**
- * Elige un elemento al azar dando más peso a los que tienen `peso`/`personas`
- * más altos. Ojo: los pesos del pool de Spotify ya vienen normalizados por
- * persona (fracciones pequeñas), así que aquí no forzamos un mínimo de 1 —
- * eso borraría esa normalización. Las canciones del mazo curado no traen
- * `peso` y valen 1 cada una, como siempre.
+ * Elige un elemento al azar dando más peso a los que tienen `peso` más alto.
+ * Ojo: los pesos del pool de Spotify ya vienen normalizados por persona
+ * (fracciones pequeñas), así que aquí no forzamos un mínimo de 1 — eso
+ * borraría esa normalización. Las canciones del mazo curado no traen `peso`
+ * y valen 1 cada una, como siempre.
  *
- * El bonus por "varias personas la tienen" (`personas`) es a propósito
- * moderado: sumar los pesos normalizados de cada persona que la comparte ya
- * la favorece bastante por sí solo, así que un empujón extra pequeño basta
- * para notarse sin volverla casi obligatoria. Con un multiplicador más
- * agresivo (`personas * 6`, como tenía antes) un grupo con pocas canciones
- * en común acababa sacando literalmente siempre las mismas 1-2 canciones
- * compartidas partida tras partida — justo lo contrario de "más variado".
+ * Ya NO hay un bonus extra por "varias personas la tienen" (`personas`):
+ * con grupos pequeños (3-4 aportando) y pocas canciones realmente en común,
+ * cualquier empujón extra —por pequeño que fuera— bastaba para que esas
+ * 1-2 canciones compartidas salieran prácticamente siempre, partida tras
+ * partida (el bug que reportó el usuario). El pool ya suma los pesos
+ * normalizados de cada persona que comparte una canción (ver
+ * `poolComunitario`), así que una canción en común sigue teniendo algo más
+ * de peso de forma natural, sin un multiplicador aparte que la vuelva casi
+ * obligatoria.
  *
  * `usos` (opcional, Map clienteId -> nº de canciones suyas ya sonadas) se
  * usa para bajar el peso de quien ya ha tenido varias canciones en la
@@ -257,7 +291,7 @@ export function baraja(config, estado) {
  */
 export function elegirPonderado(lista, usos = null) {
   const pesos = lista.map((c) => {
-    let p = Math.max(0.0001, c.peso ?? 1) * (c.personas > 1 ? 1 + (c.personas - 1) * 0.6 : 1);
+    let p = Math.max(0.0001, c.peso ?? 1);
     // Preferimos canciones medio conocidas: si tenemos la popularidad que le
     // da Spotify (0-100), la usamos para no sacar rarezas que solo conoce
     // quien la aportó. No la descartamos del todo —sigue siendo su
@@ -351,6 +385,30 @@ async function motor() {
   finally { motorOcupado = false; }
 }
 
+/**
+ * Ejecuta un paso del motor que solo debe hacerse una vez por ronda (marcado
+ * en `hecho[clave]`), reintentándolo solo en el siguiente tick si falla.
+ *
+ * Antes, la marca de "hecho" se ponía ANTES de lanzar la escritura en
+ * Firebase; si esa escritura fallaba (red inestable, `revelar()` sin poder
+ * descifrar la carta, lo que sea), la marca se quedaba puesta para siempre
+ * y el motor nunca volvía a intentar ese paso — la partida se quedaba
+ * congelada de por vida para todo el mundo, sin ningún botón que pudiera
+ * desatascarlo (el bug de "le he dado a pasar y se ha quedado todo
+ * parado"). Ahora la marca solo se confirma si la operación termina bien;
+ * si falla, se quita, así el siguiente tick (300ms) lo reintenta solo.
+ */
+async function pasoUnaVez(clave, valor, fn) {
+  if (hecho[clave] === valor) return;
+  hecho[clave] = valor;
+  try {
+    await fn();
+  } catch (e) {
+    hecho[clave] = null;
+    throw e;
+  }
+}
+
 async function motorPaso() {
   const r = E.ronda;
   const t = Net.ahora();
@@ -358,9 +416,7 @@ async function motorPaso() {
   // --- fase 1: el equipo activo coloca su carta ---
   if (r.subfase === "colocando") {
     if (r.saltar) {
-      if (hecho.saltada === r.limite) return;
-      hecho.saltada = r.limite;
-      return void (await empezarRevelacionSalto());
+      return void (await pasoUnaVez("saltada", r.limite, empezarRevelacionSalto));
     }
     if (r.confirmada || t > r.limite) {
       await Net.actualizar(S.codigo, {
@@ -376,10 +432,7 @@ async function motorPaso() {
   // --- fase 1b: se decidió saltar; enseñamos la carta 5s antes de cambiarla ---
   if (r.subfase === "saltando") {
     if (t > r.limiteSalto) {
-      const idSalto = r.n + ":" + r.limiteSalto;
-      if (hecho.saltoResuelto === idSalto) return;
-      hecho.saltoResuelto = idSalto;
-      return void (await terminarSalto());
+      return void (await pasoUnaVez("saltoResuelto", r.n + ":" + r.limiteSalto, terminarSalto));
     }
     return;
   }
@@ -391,9 +444,7 @@ async function motorPaso() {
     const pendiente = orden.find((id) => robos[id] === undefined);
 
     if (!pendiente) {
-      if (hecho.resuelta === r.n) return;
-      hecho.resuelta = r.n;
-      return void (await resolver());
+      return void (await pasoUnaVez("resuelta", r.n, resolver));
     }
 
     if (r.turnoRobo !== pendiente) {
@@ -410,14 +461,15 @@ async function motorPaso() {
 
   // --- fase 3: revelado; esperamos a que pulsen "siguiente" ---
   if (r.subfase === "revelado" && r.siguientePedida) {
-    if (hecho.lanzada === r.n) return;
-    hecho.lanzada = r.n;
-    const ganador = R.comprobarVictoria(E.equipos, E.primerEquipo);
-    if (ganador) {
-      await Sp.pausar().catch(() => {});
-      return void (await Net.actualizar(S.codigo, { fase: "fin", ganador, ronda: null }));
-    }
-    return void (await nuevaRonda(R.siguienteEquipo(E.equipos, r.equipoActivo)));
+    return void (await pasoUnaVez("lanzada", r.n, async () => {
+      const ganador = R.comprobarVictoria(E.equipos, E.primerEquipo);
+      if (ganador) {
+        await Sp.pausar().catch(() => {});
+        await Net.actualizar(S.codigo, { fase: "fin", ganador, ronda: null });
+        return;
+      }
+      await nuevaRonda(R.siguienteEquipo(E.equipos, r.equipoActivo));
+    }));
   }
 }
 
@@ -581,7 +633,7 @@ const acciones = {
   // ----- pantallas iniciales -----
   irCrear: () => { S.vista = "crear"; S.error = null; },
   irUnirse: () => { S.vista = "unirse"; S.error = null; },
-  volverInicio: () => { S.vista = "inicio"; S.previa = null; S.error = null; },
+  volverInicio: () => { S.vista = "inicio"; S.previa = null; S.error = null; sincronizarUrl(null); },
   verReglas: () => { S.modal = "reglas"; },
   cerrarModal: () => { S.modal = null; S.modalEquipo = null; },
 
@@ -614,16 +666,7 @@ const acciones = {
   },
 
   /** Paso 1 al unirse: solo el código, para ver qué equipos hay ya. */
-  async buscarSala() {
-    const codigo = (document.getElementById("in-codigo")?.value || "").trim();
-    if (!/^\d{4}$/.test(codigo)) { S.error = "El código son 4 dígitos."; return; }
-
-    const estado = await Net.leerSala(codigo);
-    if (!estado) { S.error = "No existe ninguna partida con ese código."; return; }
-    if (estado.fase !== "lobby") { S.error = "Esa partida ya ha empezado."; return; }
-
-    S.codigo = codigo; S.previa = estado; S.vista = "unirseEquipo";
-  },
+  buscarSala: () => entrarPorCodigo((document.getElementById("in-codigo")?.value || "").trim()),
 
   /** Unirse a un equipo que ya existe (otro dispositivo de la misma familia). */
   async unirmeEquipo(el) {
@@ -663,6 +706,7 @@ const acciones = {
     }
     desuscribir?.(); desuscribir = null;
     E = null; S.codigo = null; S.equipoId = null; S.vista = "inicio"; guardar();
+    sincronizarUrl(null);
   },
 
   // ----- aportar canciones de Spotify (cualquier dispositivo, en cualquier momento) -----

@@ -500,18 +500,20 @@ t("la canción en común suma cuántas personas la aportan", compartida?.persona
 t("la canción en común suma los pesos normalizados de cada aporte",
   Math.abs((compartida?.peso ?? 0) - 31 / 24) < 1e-9);
 
+// Ya no hay ningún multiplicador extra por "varias personas la tienen": el
+// único motivo por el que "Compartida" pesa más es que sus normalizados se
+// SUMAN (5/8 + 4/6 = 31/24 ≈ 1.29) frente a 3/8 y 2/6 de las que solo tiene
+// una persona, sobre un total de 2 (cada persona reparte 1 en total entre
+// sus canciones). Eso da ≈ 0.65 de probabilidad: algo más que las demás,
+// pero ni de lejos "casi siempre" — con grupos pequeños que apenas
+// comparten 1-2 canciones, un multiplicador aparte (como tenía antes) hacía
+// que esas pocas salieran prácticamente siempre partida tras partida (el
+// bug que reportó el usuario).
 let vecesElegidaComun = 0;
 const INTENTOS = 4000;
 for (let i = 0; i < INTENTOS; i++) if (App.elegirPonderado(poolFalso) === compartida) vecesElegidaComun++;
-t("la ponderación favorece claramente la canción en común frente a las demás",
-  vecesElegidaComun / INTENTOS > 0.5);
-// Pero sin pasarse: si el bonus por "varias personas la tienen" es demasiado
-// agresivo, con un grupo que solo comparte 1-2 canciones, esas acaban
-// saliendo prácticamente siempre partida tras partida (el bug que reportó el
-// usuario: "las tres veces que lo he intentado me han salido las mismas
-// canciones"). Favorecerla sí, pero dejando sitio de verdad a las demás.
-t("...pero no de forma casi absoluta: sigue habiendo sitio real para las demás canciones",
-  vecesElegidaComun / INTENTOS < 0.9);
+t("la canción en común sale algo más a menudo que las demás (por el peso sumado, no por un bonus aparte)",
+  vecesElegidaComun / INTENTOS > 0.55 && vecesElegidaComun / INTENTOS < 0.75);
 
 // El reparto entre personas debe ser justo: si alguien aporta muchas más
 // canciones que otro, no debe acaparar el mazo (el bug que reportó el usuario:
@@ -676,6 +678,76 @@ t("la línea del equipo que pierde la carta sigue ordenada",
 fb._escribir(`salas/${codigoRectifica}`, null); // limpiar
 await esperar(30); // el listener detecta que la sala desapareció y vuelve al inicio
 t("al borrarse la sala fabricada, la app vuelve a la pantalla de inicio",
+  html().includes("Crear partida nueva"));
+
+// ------------------------------------------------------------
+//  El motor de la partida (motorPaso) marca cada paso como "hecho" para no
+//  repetirlo dos veces mientras Firebase confirma el cambio. Antes, esa
+//  marca se ponía ANTES de completar la escritura: si esa escritura fallaba
+//  (aquí lo simulamos con una carta "secreta" indescifrable, que hace que
+//  `resolver()` lance un error), la marca se quedaba puesta para siempre y
+//  la partida se quedaba congelada de por vida — el bug real que reportó
+//  el usuario: "le he dado a pasar y se ha quedado todo parado, nadie
+//  tenía nada que hacer". Aquí comprobamos que, tras ese fallo, el motor
+//  reintenta solo en cuanto la causa desaparece (en vez de quedarse
+//  bloqueado aunque la carta vuelva a ser legible).
+// ------------------------------------------------------------
+console.log("Comprobando que el motor se recupera solo si falla al resolver una ronda…");
+const codigoMotor = "9090";
+fb._escribir(`salas/${codigoMotor}`, {
+  fase: "lobby", hostCliente: miId, config: { mazo: "famosas" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Equipo Motor", color: COLORES_EQUIPO[0], orden: 0,
+           fichas: 3, cartas: [], miembros: {} },
+    eq2: { id: "eq2", nombre: "Equipo Rival", color: COLORES_EQUIPO[1], orden: 1,
+           fichas: 3, cartas: [], miembros: {} },
+  },
+  usadas: {}, aportes: {}, ronda: null, ganador: null,
+});
+await clic('[data-accion="irUnirse"]', "Unirse para probar la recuperación del motor");
+document.getElementById("in-codigo").value = codigoMotor;
+await clic('[data-accion="buscarSala"]', "Buscar sala del motor");
+await clic('[data-accion="unirmeEquipo"]', "Unirme a Equipo Motor (con hostCliente = yo, para que corra el motor)");
+
+// El motor solo corre con la sala en fase "jugando" (ver `motor()`).
+fb._escribir(`salas/${codigoMotor}/fase`, "jugando");
+
+// Fabricamos una ronda ya en fase de robo, con la decisión de robar ya
+// tomada (así el motor entra directo en la rama "resolver") y una carta
+// secreta corrupta a propósito, para que `Net.revelar` no pueda leerla.
+fb._escribir(`salas/${codigoMotor}/ronda`, {
+  // n con un valor improbable a propósito: el motor recuerda "ronda ya
+  // resuelta" por número de ronda (hecho.resuelta), y no queremos que
+  // choque con el n=1 de la partida real de 3 equipos que se juega más
+  // abajo en este mismo archivo (mismo cliente, mismo proceso).
+  n: 918273, equipoActivo: "eq1", subfase: "robando",
+  colocacion: 0, robos: { eq2: "pasa" }, confirmada: true, turnoRobo: null, limiteRobo: 0,
+  carta: null, resultado: null, esperandoBonus: false, siguientePedida: false, saltar: false,
+  limiteSalto: 0, secreto: "esto-no-es-una-carta-cifrada-valida",
+});
+await esperar(60);
+let salaMotor = fb._leer(`salas/${codigoMotor}`);
+t("con una carta secreta indescifrable, la ronda se queda en 'robando' (resolver falla)",
+  salaMotor.ronda.subfase === "robando");
+
+// Ahora arreglamos la carta secreta (la sustituimos por una de verdad,
+// cifrada como lo haría el propio juego) SIN tocar nada más: si la marca de
+// "ya resuelto" se hubiera quedado pegada para siempre (el bug antiguo), la
+// ronda jamás avanzaría aunque la carta ya se pueda leer perfectamente.
+fb._escribir(`salas/${codigoMotor}/ronda/secreto`,
+  Net.ocultar({ titulo: "Recuperada", artista: "Motor", anio: 1990 }, codigoMotor));
+await esperar(350); // sobra un ciclo entero de tic() (300ms) para el reintento
+
+salaMotor = fb._leer(`salas/${codigoMotor}`);
+t("en cuanto la carta vuelve a ser legible, el motor reintenta solo y la ronda avanza a 'revelado' "
+  + "(si la marca de 'hecho' se hubiera quedado pegada, esto nunca pasaría)",
+  salaMotor.ronda.subfase === "revelado");
+t("la carta recuperada es la correcta", salaMotor.ronda.carta?.titulo === "Recuperada");
+
+await clic('[data-accion="salir"]', "Salir de la sala de prueba del motor");
+fb._escribir(`salas/${codigoMotor}`, null);
+await esperar(30);
+t("al borrarse la sala del motor, la app vuelve a la pantalla de inicio",
   html().includes("Crear partida nueva"));
 
 // ------------------------------------------------------------
@@ -848,6 +920,11 @@ const codigo = Object.keys(fb._leer("salas") || {})[0];
 t("se ha creado una sala con código de 4 dígitos", /^\d{4}$/.test(codigo || ""));
 t("el lobby muestra el código", html().includes(codigo));
 sinErrores("lobby");
+// La URL debe reflejar el código de la partida (para tener una dirección
+// propia por partida, en vez de depender de que el caché/sesión guardada
+// "adivine" en cuál estábamos — ver LEEME).
+t("crear una partida refleja su código en la URL (?codigo=...)",
+  new URLSearchParams(location.search).get("codigo") === codigo);
 
 // Entran otros dos equipos desde sus propios dispositivos.
 for (const [i, nombre] of [[1, "Los Primos"], [2, "Los Peques"]]) {
@@ -1103,6 +1180,10 @@ t("se puede volver al lobby", est().fase === "lobby");
 t("al reiniciar se reparten fichas y se vacían las cartas",
   Object.values(est().equipos).every(
     (e) => e.fichas === AJUSTES.fichasIniciales && (e.cartas || []).length === 0));
+
+await clic('[data-accion="salir"]', "Salir de la partida completa");
+t("al salir, la URL vuelve a no tener código (no arrastramos una partida vieja)",
+  !new URLSearchParams(location.search).get("codigo"));
 
 console.log(`\n${fallos === 0 ? "✓ PARTIDA COMPLETA SIN FALLOS" : "✗ " + fallos + " FALLOS"}\n`);
 process.exit(fallos ? 1 : 0);
