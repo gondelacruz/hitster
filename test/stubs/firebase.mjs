@@ -43,12 +43,31 @@ export const signInAnonymously = async () => ({ user: { uid: "test" } });
 export const ref = (_db, path) => ({ path });
 export const serverTimestamp = () => Date.now();
 
-export async function set(r, v) { escribir(r.path, v); avisar(); }
+// Firebase de verdad rechaza escribir `undefined` en cualquier propiedad
+// anidada (aunque JSON.stringify lo borraría en silencio). Lo replicamos
+// aquí a propósito: si no lo hiciéramos, un bug como "un objeto se queda con
+// una clave puesta a `undefined`" pasaría los tests tranquilamente y solo
+// explotaría en producción, como pasó con la `popularidad` de Spotify.
+function comprobarSinUndefined(valor, ruta) {
+  if (valor === undefined) {
+    throw new Error(`set failed: value argument contains undefined in property '${ruta}'`);
+  }
+  if (valor === null || typeof valor !== "object") return;
+  for (const [k, v] of Object.entries(valor)) comprobarSinUndefined(v, ruta ? `${ruta}.${k}` : k);
+}
+
+export async function set(r, v) {
+  comprobarSinUndefined(v, partes(r.path).join("."));
+  escribir(r.path, v); avisar();
+}
 export async function get(r) { return snap(r.path); }
 export async function remove(r) { escribir(r.path, null); avisar(); }
 
 export async function update(r, cambios) {
-  for (const [k, v] of Object.entries(cambios)) escribir(r.path + "/" + k, v);
+  for (const [k, v] of Object.entries(cambios)) {
+    comprobarSinUndefined(v, [...partes(r.path), ...k.split("/")].join("."));
+    escribir(r.path + "/" + k, v);
+  }
   avisar();
 }
 

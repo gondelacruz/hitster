@@ -62,9 +62,14 @@ globalThis.fetch = async (url, opciones = {}) => {
                              pista("spotify:track:top-c", "De medio plazo", 2005)] });
     return json({ items: [] });
   }
-  // Reproducidas recientemente.
+  // Reproducidas recientemente. A propósito, esta pista NO trae "popularity"
+  // (a veces Spotify no lo incluye): sirve para comprobar que la app no
+  // intenta guardar una `popularidad: undefined`, que Firebase rechazaría.
   if (u.includes("/v1/me/player/recently-played"))
-    return json({ items: [{ track: pista("spotify:track:reciente-f", "Sonó hace poco", 2020) }] });
+    return json({ items: [{ track: {
+      uri: "spotify:track:reciente-f", name: "Sonó hace poco",
+      artists: [{ name: "Artista" }], album: { name: "Álbum", release_date: "2020-01-01" },
+    } }] });
   // Canciones guardadas ("Me gusta").
   if (u.includes("/v1/me/tracks")) {
     if (qs.get("offset") !== "0") return json({ items: [] });
@@ -173,6 +178,12 @@ t("se incluyen canciones reproducidas recientemente",
 t("se guarda la popularidad que da Spotify a cada canción",
   aporte?.canciones.find((c) => c.uri === "spotify:track:playlist-e")?.popularidad === 8
   && aporte?.canciones.find((c) => c.uri === "spotify:track:top-a")?.popularidad === 60);
+sinErrores("aportar Spotify con una canción sin popularidad");
+t("una canción sin popularidad de Spotify se guarda igualmente (sin romper el aporte)",
+  aporte?.canciones.some((c) => c.uri === "spotify:track:reciente-f"));
+t("a esa canción no se le pone una `popularidad` a null/undefined: la propiedad simplemente no existe",
+  !Object.prototype.hasOwnProperty.call(
+    aporte?.canciones.find((c) => c.uri === "spotify:track:reciente-f") || {}, "popularidad"));
 t("tras aportar con éxito, se ofrece la opción de conectar otra cuenta de Spotify "
   + "(para cuando varios comparten el mismo móvil)",
   !!$('[data-accion="cambiarCuentaSpotify"]'));

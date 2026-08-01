@@ -250,18 +250,20 @@ export async function misCancionesFavoritas() {
   const sumar = (t, peso) => {
     const anio = parseInt((t.album?.release_date || "").slice(0, 4), 10);
     if (!anio || !t.uri) return;
-    const popularidad = typeof t.popularity === "number" ? t.popularity : undefined;
+    const tienePopularidad = typeof t.popularity === "number";
     const actual = mapa.get(t.uri);
     if (actual) {
       actual.peso += peso;
-      if (actual.popularidad === undefined && popularidad !== undefined) actual.popularidad = popularidad;
+      // Ojo: nunca asignamos `undefined` a una propiedad. Firebase rechaza
+      // escribir cualquier campo puesto a `undefined` (a diferencia de
+      // JSON.stringify, que simplemente lo omitiría), así que si no hay
+      // popularidad, la propiedad ni se crea.
+      if (actual.popularidad === undefined && tienePopularidad) actual.popularidad = t.popularity;
       return;
     }
-    mapa.set(t.uri, {
-      titulo: t.name,
-      artista: t.artists.map((a) => a.name).join(", "),
-      anio, uri: t.uri, peso, popularidad,
-    });
+    const cancion = { titulo: t.name, artista: t.artists.map((a) => a.name).join(", "), anio, uri: t.uri, peso };
+    if (tienePopularidad) cancion.popularidad = t.popularity;
+    mapa.set(t.uri, cancion);
   };
 
   for (const [rango, peso] of [["long_term", 3], ["medium_term", 2]]) {
