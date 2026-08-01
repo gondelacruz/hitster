@@ -13,7 +13,7 @@
 //    haya más de una.
 export const SPOTIFY_CLIENT_IDS = [
   { id: "6a7b96a2dbe14a2ea0648a9793b69d6d", nombre: "Grupo A" },
-  // { id: "PEGA_AQUI_EL_CLIENT_ID_DE_LA_SEGUNDA_APP", nombre: "Grupo B" },
+  { id: "aefd3c956c684cce86e5e8ef1a7851af", nombre: "Grupo B" },
 ];
 
 // 2) Pega aquí la configuración de tu proyecto de Firebase
