@@ -169,7 +169,7 @@ salaAjena = fb._leer(`salas/${codigoAjeno}`);
 const aporte = salaAjena.aportes?.[miId];
 t("el aporte de Spotify queda guardado en la sala", !!aporte && aporte.canciones.length === 6);
 t("el peso se suma cuando la misma canción sale en varias fuentes",
-  aporte?.canciones.find((c) => c.uri === "spotify:track:top-b")?.peso === 5);
+  aporte?.canciones.find((c) => c.uri === "spotify:track:top-b")?.peso === 2);
 t("se incluyen canciones guardadas y de playlists propias, no solo el top",
   aporte?.canciones.some((c) => c.uri === "spotify:track:guardada-d")
   && aporte?.canciones.some((c) => c.uri === "spotify:track:playlist-e"));
@@ -233,11 +233,49 @@ localStorage.setItem("hitster_spotify_token", JSON.stringify({
   ...tokenCompleto,
   alcance: "user-library-read playlist-read-private user-read-recently-played", // falta user-top-read
 }));
-t("una sesión sin 'user-top-read' también fuerza reconectar (es la fuente que más pesa)",
-  Sp.faltanPermisos() === true);
+t("a 'user-top-read' NO se le exige: sin él no hace falta reconectar (el top no es imprescindible, "
+  + "se usan playlists/guardadas/recientes igual)",
+  Sp.faltanPermisos() === false);
 
 localStorage.setItem("hitster_spotify_token", JSON.stringify(tokenCompleto)); // restauramos para el resto de pruebas
 t("con todos los permisos concedidos, no hace falta reconectar", Sp.faltanPermisos() === false);
+
+// ------------------------------------------------------------
+//  Si falla justo el "top" de Spotify (sin permiso, o cualquier otro motivo),
+//  no debe impedir aportar: se usan igual las demás fuentes (recientes,
+//  guardadas, playlists), sin lanzar ningún error.
+// ------------------------------------------------------------
+console.log("Comprobando que sin el 'top' de Spotify se puede aportar igual (se usan las demás fuentes)…");
+{
+  const fetchDeVerdad = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const json = (obj) => ({ ok: true, status: 200, text: async () => JSON.stringify(obj), json: async () => obj });
+    if (u.includes("/v1/me/top/tracks")) {
+      return {
+        ok: false, status: 403, statusText: "Forbidden",
+        text: async () => JSON.stringify({ error: { message: "Insufficient client scope" } }),
+      };
+    }
+    if (u.includes("/v1/me/player/recently-played"))
+      return json({ items: [{ track: pista("spotify:track:sin-top-1", "Sin permiso de top", 2015) }] });
+    if (u.includes("/v1/me/tracks")) return json({ items: [] });
+    if (u.includes("/v1/playlists/plx/tracks"))
+      return json({ items: [{ track: pista("spotify:track:sin-top-2", "De una playlist", 2019) }] });
+    if (u.includes("/v1/me/playlists")) return json({ items: [{ id: "plx", owner: { id: "mi-id-de-prueba" } }] });
+    if (u.includes("/v1/me")) return json({ id: "mi-id-de-prueba" });
+    return json({});
+  };
+  let resultado = null, error = null;
+  try { resultado = await Sp.misCancionesFavoritas(); } catch (e) { error = e; }
+  globalThis.fetch = fetchDeVerdad;
+
+  t("sin permiso de 'top', si las demás fuentes sí traen canciones, no se lanza ningún error",
+    error === null);
+  t("las canciones de recientes y playlists se aprovechan igual, sin depender del 'top'",
+    resultado?.some((c) => c.uri === "spotify:track:sin-top-1")
+    && resultado?.some((c) => c.uri === "spotify:track:sin-top-2"));
+}
 
 // ------------------------------------------------------------
 //  Si TODAS las fuentes de Spotify responden sin error de permisos pero
@@ -347,6 +385,13 @@ const INTENTOS = 4000;
 for (let i = 0; i < INTENTOS; i++) if (App.elegirPonderado(poolFalso) === compartida) vecesElegidaComun++;
 t("la ponderación favorece claramente la canción en común frente a las demás",
   vecesElegidaComun / INTENTOS > 0.5);
+// Pero sin pasarse: si el bonus por "varias personas la tienen" es demasiado
+// agresivo, con un grupo que solo comparte 1-2 canciones, esas acaban
+// saliendo prácticamente siempre partida tras partida (el bug que reportó el
+// usuario: "las tres veces que lo he intentado me han salido las mismas
+// canciones"). Favorecerla sí, pero dejando sitio de verdad a las demás.
+t("...pero no de forma casi absoluta: sigue habiendo sitio real para las demás canciones",
+  vecesElegidaComun / INTENTOS < 0.9);
 
 // El reparto entre personas debe ser justo: si alguien aporta muchas más
 // canciones que otro, no debe acaparar el mazo (el bug que reportó el usuario:

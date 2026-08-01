@@ -226,8 +226,10 @@ Cualquier dispositivo (el anfitrión, el líder o cualquiera que se una a un equ
 sala de espera, **Añadir mis canciones de Spotify**. Cada uno conecta su propia cuenta desde su propio
 móvil —no hace falta que todos usen la de Premium del anfitrión, esto solo lee sus canciones
 favoritas—. La app combina lo que aporte cada persona y **prioriza las canciones que varios tengáis en
-común**: si tú y tu hermano tenéis la misma canción en el top, es mucho más probable que salga que una
-que solo escucháis vosotros dos por separado.
+común**: si tú y tu hermano tenéis la misma canción en el top, es más probable que salga que una que
+solo escucháis vosotros dos por separado — pero sin pasarse: si el grupo solo comparte una o dos
+canciones, no van a salir siempre esas mismas partida tras partida, sigue habiendo sitio real para el
+resto.
 
 Antes de sumar, la app **normaliza el peso de cada persona**: si alguien conecta su Spotify y aporta
 muchísimas más canciones que otro (más historial, más playlists), no acapara el mazo. Cada persona
@@ -304,7 +306,7 @@ inglés»). Añade las que quieras al final de la lista, antes del `];`.
 | Los demás equipos no ven la partida | Revisa que `databaseURL` esté en `config.js` y que publicaste las reglas de Firebase. |
 | Se cerró la pestaña del anfitrión | Volved a entrar en la web: la partida se recupera sola. Si el anfitrión sale con el botón **Salir**, la partida se borra. |
 | Un familiar no puede colocar la carta ni robar | Es normal si no fue quien creó ese equipo: solo el líder del equipo juega los turnos. El resto puede aportar canciones de Spotify y mirar. |
-| «No he encontrado canciones tuyas en Spotify» aunque sí tenga historial | Si ya tenía la sesión conectada de antes, probablemente le faltan permisos nuevos (biblioteca, playlists, top, reproducciones recientes). La app detecta esto sola en la mayoría de los casos y le lleva otra vez a la pantalla de Spotify para darlos. Si aun así vuelve a salir el aviso, ahora incluye un detalle por fuente (top, recientes, guardadas, playlists) para saber cuál es la que falla — si alguna dice "error 429", es un límite temporal de peticiones de Spotify: basta con esperar un minuto y reintentarlo. |
+| «No he encontrado canciones tuyas en Spotify» aunque sí tenga historial | Si ya tenía la sesión conectada de antes, probablemente le faltan permisos nuevos (biblioteca, playlists, reproducciones recientes — el "top" no hace falta, es opcional). La app detecta esto sola en la mayoría de los casos y le lleva otra vez a la pantalla de Spotify para darlos. Si aun así vuelve a salir el aviso, ahora incluye un detalle por fuente (top, recientes, guardadas, playlists) para saber cuál es la que falla — si alguna dice "error 429", es un límite temporal de peticiones de Spotify: basta con esperar un minuto y reintentarlo. |
 | «Leyendo tus canciones de Spotify…» se queda colgado varios minutos | Ya no debería pasar: cada petición a Spotify tiene un límite de 12 segundos, y si falla la primera, se corta ahí en vez de seguir intentando fuente a fuente. Si aun así tarda mucho o el aviso dice "no se ha podido conectar con Spotify", prueba con otra red (datos móviles en vez de wifi), sin bloqueadores de anuncios ni VPN — algo de por medio puede estar cortando las peticiones a `api.spotify.com` antes de que lleguen. |
 
 ---

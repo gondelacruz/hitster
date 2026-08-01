@@ -235,6 +235,14 @@ export function baraja(config, estado) {
  * eso borraría esa normalización. Las canciones del mazo curado no traen
  * `peso` y valen 1 cada una, como siempre.
  *
+ * El bonus por "varias personas la tienen" (`personas`) es a propósito
+ * moderado: sumar los pesos normalizados de cada persona que la comparte ya
+ * la favorece bastante por sí solo, así que un empujón extra pequeño basta
+ * para notarse sin volverla casi obligatoria. Con un multiplicador más
+ * agresivo (`personas * 6`, como tenía antes) un grupo con pocas canciones
+ * en común acababa sacando literalmente siempre las mismas 1-2 canciones
+ * compartidas partida tras partida — justo lo contrario de "más variado".
+ *
  * `usos` (opcional, Map clienteId -> nº de canciones suyas ya sonadas) se
  * usa para bajar el peso de quien ya ha tenido varias canciones en la
  * partida y subir el de quien todavía no ha tenido ninguna, para que los
@@ -242,7 +250,7 @@ export function baraja(config, estado) {
  */
 export function elegirPonderado(lista, usos = null) {
   const pesos = lista.map((c) => {
-    let p = Math.max(0.0001, c.peso ?? 1) * (c.personas > 1 ? c.personas * 6 : 1);
+    let p = Math.max(0.0001, c.peso ?? 1) * (c.personas > 1 ? 1 + (c.personas - 1) * 0.6 : 1);
     // Preferimos canciones medio conocidas: si tenemos la popularidad que le
     // da Spotify (0-100), la usamos para no sacar rarezas que solo conoce
     // quien la aportó. No la descartamos del todo —sigue siendo su

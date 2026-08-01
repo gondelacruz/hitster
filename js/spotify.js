@@ -19,13 +19,15 @@ export const SCOPES = [
 // Permisos que hacen falta específicamente para "Nuestras canciones". Si
 // alguien conectó su Spotify antes de que existieran (o alguno se ha
 // revocado), su sesión guardada no los tendrá y hay que reconectar.
-// Incluimos "user-top-read" porque es la fuente que más pesa (top de largo y
-// medio plazo); sin él, a alguien con mucho historial pero sin "Me gusta"
-// guardados ni playlists propias le podría no salir nada, aunque sí escuche
-// mucha música.
-const SCOPES_APORTAR = [
-  "user-library-read", "playlist-read-private", "user-read-recently-played", "user-top-read",
-];
+//
+// A propósito NO incluimos "user-top-read" aquí: el top de Spotify es solo
+// una fuente más, no la más importante para el juego (lo que de verdad
+// interesa es qué canciones tenéis en común y que sean medio conocidas, no
+// necesariamente tu top personal). Si a alguien le falta justo ese permiso,
+// no le obligamos a reconectar por eso: la app simplemente lo salta y usa
+// playlists, guardadas y reproducidas recientemente, que son perfectamente
+// suficientes.
+const SCOPES_APORTAR = ["user-library-read", "playlist-read-private", "user-read-recently-played"];
 
 const LS = "hitster_spotify_token";
 
@@ -266,13 +268,20 @@ export async function pausar() {
 
 /**
  * Canciones favoritas del dueño de esta sesión, para el mazo "Nuestras canciones".
- * Combina varias fuentes con distinto peso (cuantas más señales de que de verdad
- * le gusta o la ha escuchado, más probable que salga en la partida):
- *   - top tracks de largo plazo (varios años de historial): peso 3
- *   - top tracks de medio plazo (~6 meses): peso 2
- *   - reproducidas recientemente (las últimas ~50): peso 2
+ * Combina varias fuentes con distinto peso. Ojo: el "top" de Spotify (lo más
+ * escuchado) se deja a propósito como la fuente de MENOS peso, no la que
+ * más: lo que hace bueno a este mazo no es cuánto escuchas tú algo en
+ * solitario, sino que sea una canción que varios jugadores tengáis en común
+ * y que sea medio conocida (eso ya lo prioriza `elegirPonderado` con
+ * `personas` y `popularidad`, por encima de todo esto). El "top" tampoco es
+ * obligatorio: si a alguien le falta ese permiso, o Spotify no lo da por lo
+ * que sea, se salta sin más y se usa el resto de fuentes igual.
+ *   - canciones de sus propias playlists: peso 2 (una señal fuerte: se ha
+ *     tomado la molestia de guardarla en una lista)
  *   - canciones guardadas ("Me gusta"): peso 2
- *   - canciones de sus propias playlists: peso 1
+ *   - reproducidas recientemente (las últimas ~50): peso 2
+ *   - top tracks de largo plazo (varios años de historial): peso 1
+ *   - top tracks de medio plazo (~6 meses): peso 1
  * Se descarta a propósito el "top" de corto plazo (últimas 4 semanas): mezcla
  * escuchas puntuales recientes con los favoritos de verdad (para eso ya está
  * lo de "reproducidas recientemente", que es más literal).
@@ -342,7 +351,7 @@ export async function misCancionesFavoritas() {
   };
 
   for (const [rango, peso, etiqueta] of [
-    ["long_term", 3, "top largo plazo"], ["medium_term", 2, "top medio plazo"],
+    ["long_term", 1, "top largo plazo"], ["medium_term", 1, "top medio plazo"],
   ]) {
     await probar(etiqueta, async () => {
       for (const offset of [0, 50]) {
@@ -371,7 +380,7 @@ export async function misCancionesFavoritas() {
     for (const p of propias) {
       try {
         const r = await api(`/playlists/${p.id}/tracks?limit=50&fields=items(track(name,uri,artists(name),album(release_date),popularity))`);
-        for (const it of r?.items || []) if (it.track) sumar(it.track, 1);
+        for (const it of r?.items || []) if (it.track) sumar(it.track, 2);
       } catch (e) {
         // Si es un fallo de red, no tiene sentido seguir probando playlist a
         // playlist (podría haber hasta 15): lo dejamos subir para que
