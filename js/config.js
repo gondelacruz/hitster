@@ -3,18 +3,20 @@
 //  Sigue las instrucciones del archivo LEEME.md
 // ============================================================
 
-// 1) Pega aquí el "Client ID" de tu app de Spotify Developer.
-//    Con una sola entrada os vale a casi todos. Si sois muchos aportando
-//    canciones y os topáis con el límite de Spotify (una app en modo
-//    desarrollo solo admite 5 personas autorizadas — ver LEEME.md), puedes
-//    crear una SEGUNDA app en developer.spotify.com/dashboard, autorizar en
-//    ella a otro grupo de hasta 5 personas, y añadir su Client ID aquí como
-//    una entrada más. No hace falta preguntarle a nadie con cuál conectarse:
-//    en cuanto haya más de una, la app prueba sola la primera y, si esa
-//    cuenta no está autorizada ahí, reintenta sola con la siguiente, sin
-//    que nadie tenga que elegir nada (solo verá la pantalla de Spotify pedir
-//    login otra vez).
-export const SPOTIFY_CLIENT_IDS = [
+// 1) Las apps de Spotify (Client ID) YA NO se pegan aquí: se registran desde
+//    dentro del propio juego, con el botón "¿Nunca has jugado con tus
+//    canciones?" (verás las instrucciones ahí mismo, paso a paso). Se
+//    guardan en tu base de datos de Firebase, así que cualquiera de la
+//    familia puede añadir la suya cuando haga falta (por ejemplo, si ya sois
+//    más de 5 aportando canciones y Spotify os topa con su límite por app),
+//    sin volver a tocar este archivo ni redesplegar nada.
+//
+//    Esta lista de aquí abajo solo sirve como "semilla" de una sola vez: la
+//    primera vez que arranque el juego con la base de datos vacía, se
+//    copiará lo que haya aquí. Como esta base de datos ya tenía estas dos
+//    apps funcionando (Grupo A / Grupo B), las dejamos aquí para que la
+//    migración las conserve tal cual; no hace falta tocarlas.
+export const SPOTIFY_CLIENT_IDS_SEMILLA = [
   { id: "6a7b96a2dbe14a2ea0648a9793b69d6d", nombre: "Grupo A" },
   { id: "aefd3c956c684cce86e5e8ef1a7851af", nombre: "Grupo B" },
 ];

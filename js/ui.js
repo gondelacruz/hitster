@@ -37,10 +37,17 @@ export function htmlFichas(n) {
 
 /**
  * Línea temporal con huecos entre cartas.
- * opciones: { elegibles:Set|null, elegido:int|null, marcas:{slot:{texto,clase}}, }
+ * opciones: { elegibles:Set|null, elegido:int|null, marcas:{slot:{texto,clase}},
+ *             cartaDestacada:(carta)=>boolean }
+ *
+ * `cartaDestacada` resalta una carta YA puesta en la línea (con un borde
+ * discontinuo), en vez de un hueco: se usa justo cuando el equipo acierta y
+ * su carta recién ganada ya forma parte de esta misma línea, para señalarla
+ * sin un marcador de hueco aparte que quedaría descolocado (ver
+ * `faseRevelado`).
  */
 export function htmlLinea(cartas, opciones = {}) {
-  const { elegibles = null, elegido = null, marcas = {} } = opciones;
+  const { elegibles = null, elegido = null, marcas = {}, cartaDestacada = null } = opciones;
   const lista = cartas || [];
   let out = '<div class="linea">';
 
@@ -60,7 +67,8 @@ export function htmlLinea(cartas, opciones = {}) {
 
   out += hueco(0);
   lista.forEach((c, i) => {
-    out += `<div class="celda-carta">${htmlCarta(c)}</div>`;
+    const clase = cartaDestacada && cartaDestacada(c) ? "celda-carta destacada" : "celda-carta";
+    out += `<div class="${clase}">${htmlCarta(c)}</div>`;
     out += hueco(i + 1);
   });
   return out + "</div>";

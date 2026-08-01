@@ -102,23 +102,29 @@ const Sp = await import("../js/spotify.js");
 
 localStorage.setItem("hitster_spotify_token", JSON.stringify({
   access_token: "tok", refresh_token: "ref", expira: Date.now() + 3.6e6, alcance: Sp.SCOPES,
-  clientId: Sp.SPOTIFY_CLIENT_IDS[0]?.id,
+  clientId: "client_id_de_pruebas",
 }));
 
 // ---------- arrancamos la app ----------
 const fb = await import("./stubs/firebase.mjs");
 const Net = await import("../js/net.js");
 const R = await import("../js/reglas.js");
-const { AJUSTES, COLORES_EQUIPO } = await import("../js/config.js");
-// Importante: los módulos reales (app.js, spotify.js) reciben config.js
-// REDIRIGIDO a este doble de prueba (ver test/hooks.mjs). Si aquí lo
-// importáramos como "../js/config.js" en vez de por esta misma ruta,
-// obtendríamos una copia distinta del array `SPOTIFY_CLIENT_IDS` — y mutarla
-// (como hace la prueba del selector multi-app, más abajo) no tendría ningún
-// efecto en lo que ve app.js.
-const { SPOTIFY_CLIENT_IDS } = await import("./stubs/config.mjs");
+// Importante: importamos config.js por esta misma ruta (el doble de prueba),
+// no como "../js/config.js": los módulos reales (app.js, spotify.js) reciben
+// config.js REDIRIGIDO a este doble (ver test/hooks.mjs), y así nos
+// aseguramos de ver exactamente los mismos valores que ellos.
+const { AJUSTES, COLORES_EQUIPO, SPOTIFY_CLIENT_IDS_SEMILLA } = await import("./stubs/config.mjs");
 const App = await import("../js/app.js");
 await esperar(20);
+
+// Las apps de Spotify ya no se hardcodean: viven en Firebase, y se rellenan
+// con lo que hubiera en config.js SOLO la primera vez (base de datos vacía).
+// Con el stub de Firebase arrancando siempre en blanco, esta migración
+// automática debe haber ocurrido nada más arrancar la app.
+t("al arrancar con Firebase vacío, se siembra la semilla de config.js como primera app de Spotify",
+  Sp.appsSpotify().some((a) => a.id === SPOTIFY_CLIENT_IDS_SEMILLA[0].id));
+t("la semilla queda guardada de verdad en Firebase, no solo en memoria",
+  fb._leer(`spotifyApps/${SPOTIFY_CLIENT_IDS_SEMILLA[0].id}`)?.nombre === SPOTIFY_CLIENT_IDS_SEMILLA[0].nombre);
 
 const html = () => document.getElementById("app").innerHTML;
 const $ = (sel) => document.querySelector(sel);
@@ -297,15 +303,20 @@ console.log("Comprobando que se puede elegir con qué Client ID conectar (varias
 // ------------------------------------------------------------
 console.log("Comprobando el reintento automático entre varias apps de Spotify (sin preguntar nada)…");
 {
-  SPOTIFY_CLIENT_IDS.push({ id: "client-id-grupo-b", nombre: "Grupo B" });
+  // Ya no se hardcodean en config.js: se guardan en Firebase, y app.js las
+  // carga con Sp.fijarAppsSpotify (ver init()). Aquí simulamos que ya hay
+  // una segunda app registrada, tal y como quedaría tras usar el botón
+  // "¿Nunca has jugado con tus canciones?".
+  const appsOriginales = Sp.appsSpotify();
+  Sp.fijarAppsSpotify([...appsOriginales, { id: "client-id-grupo-b", nombre: "Grupo B" }]);
   sessionStorage.removeItem("hitster_spotify_intentados");
 
   t("sin haber probado ninguna app todavía, la siguiente sin probar es la primera configurada",
-    Sp.siguienteAppSinProbar() === SPOTIFY_CLIENT_IDS[0].id);
+    Sp.siguienteAppSinProbar() === appsOriginales[0].id);
 
   const locationDeVerdad = globalThis.location;
   globalThis.location = { href: "", origin: "https://ejemplo.github.io", pathname: "/hitster/" };
-  await Sp.iniciarLogin(); // sin indicar cuál: debe coger la primera sin probar (Grupo A) y marcarla
+  await Sp.iniciarLogin(); // sin indicar cuál: debe coger la primera sin probar y marcarla
   globalThis.location = locationDeVerdad;
 
   t("tras probar la primera app (sin indicarla), la siguiente sin probar es la segunda (Grupo B)",
@@ -323,9 +334,9 @@ console.log("Comprobando el reintento automático entre varias apps de Spotify (
 
   Sp.limpiarIntentados();
   t("al limpiar los intentos (login que sí funcionó), se vuelve a empezar por la primera",
-    Sp.siguienteAppSinProbar() === SPOTIFY_CLIENT_IDS[0].id);
+    Sp.siguienteAppSinProbar() === appsOriginales[0].id);
 
-  SPOTIFY_CLIENT_IDS.pop(); // restauramos: solo una app configurada, como espera el resto de pruebas
+  Sp.fijarAppsSpotify(appsOriginales); // restauramos: solo la(s) app(s) original(es), como espera el resto de pruebas
   sessionStorage.removeItem("hitster_spotify_intentados");
 }
 
@@ -335,7 +346,7 @@ console.log("Comprobando verificarAcceso() (distingue 'cuenta no autorizada en e
   const tokenGuardado = localStorage.getItem("hitster_spotify_token");
   localStorage.setItem("hitster_spotify_token", JSON.stringify({
     access_token: "tok", refresh_token: "ref", expira: Date.now() + 3600000,
-    alcance: Sp.SCOPES, clientId: SPOTIFY_CLIENT_IDS[0]?.id,
+    alcance: Sp.SCOPES, clientId: Sp.appsSpotify()[0]?.id,
   }));
 
   globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => "Forbidden" });
@@ -358,6 +369,75 @@ console.log("Comprobando verificarAcceso() (distingue 'cuenta no autorizada en e
 
   globalThis.fetch = fetchDeVerdad;
   localStorage.setItem("hitster_spotify_token", tokenGuardado);
+}
+
+// ------------------------------------------------------------
+//  Botón "¿Nunca has jugado con tus canciones?": cualquiera puede registrar
+//  su propia app de Spotify desde dentro del juego (sin tocar config.js), y
+//  queda guardada en Firebase para todo el mundo. Lo probamos desde el
+//  lobby, con la sesión de Spotify temporalmente vacía para que aparezca el
+//  botón (igual que le pasaría a alguien que nunca ha conectado nada).
+// ------------------------------------------------------------
+console.log("Comprobando el alta de una nueva app de Spotify (self-service) desde el lobby…");
+{
+  const tokenGuardado = localStorage.getItem("hitster_spotify_token");
+  const codigoAlta = "7171";
+  fb._escribir(`salas/${codigoAlta}`, {
+    fase: "lobby", hostCliente: "otro-host-alta", config: { mazo: "spotify" },
+    equipos: {
+      eq1: { id: "eq1", nombre: "Equipo Alta", color: COLORES_EQUIPO[0], orden: 0,
+             fichas: 3, cartas: [], miembros: {} },
+    },
+    usadas: {}, aportes: {}, ronda: null, ganador: null,
+  });
+  await clic('[data-accion="irUnirse"]', "Unirse para probar el alta de app de Spotify");
+  document.getElementById("in-codigo").value = codigoAlta;
+  await clic('[data-accion="buscarSala"]', "Buscar sala de alta de app");
+  await clic('[data-accion="unirmeEquipo"]', "Unirme a Equipo Alta");
+
+  // Sin sesión de Spotify (como si nunca hubiéramos conectado nada). El
+  // lobby calcula el botón a mostrar leyendo Sp.haySesion() en cada render,
+  // así que basta con forzar un re-render (reescribiendo la sala tal cual)
+  // para que se refleje, sin tocar nada del estado interno de la app.
+  localStorage.removeItem("hitster_spotify_token");
+  fb._escribir(`salas/${codigoAlta}`, fb._leer(`salas/${codigoAlta}`));
+  await esperar(20);
+
+  t("sin sesión de Spotify, el lobby ofrece el botón para dar de alta una app propia",
+    !!$('[data-accion="abrirAnadirSpotifyApp"]'));
+
+  await clic('[data-accion="abrirAnadirSpotifyApp"]', "Abrir instrucciones para añadir una app de Spotify");
+  t("las instrucciones muestran el Redirect URI exacto de esta web (el que hay que pegar en Spotify)",
+    html().includes(Sp.redirectUri()));
+
+  await clic('[data-accion="guardarAppSpotify"]', "Intentar guardar sin rellenar nada");
+  t("si el Client ID no tiene pinta de serlo (32 letras/números), se avisa y no se guarda nada",
+    html().includes("no tiene la pinta"));
+
+  document.getElementById("in-spotify-clientid").value = "0123456789abcdef0123456789abcdef";
+  await clic('[data-accion="guardarAppSpotify"]', "Guardar sin ponerle nombre a la app");
+  t("hace falta ponerle un nombre a la app antes de guardarla", html().includes("Ponle un nombre"));
+
+  // Ojo: cada click re-renderiza el modal entero (app.innerHTML), así que los
+  // valores escritos antes se pierden — hay que rellenar ambos campos otra
+  // vez justo antes del envío que sí debe funcionar.
+  document.getElementById("in-spotify-clientid").value = "0123456789abcdef0123456789abcdef";
+  document.getElementById("in-spotify-nombre").value = "Familia de Pruebas";
+  await clic('[data-accion="guardarAppSpotify"]', "Guardar la nueva app de Spotify");
+  t("la nueva app queda guardada de verdad en Firebase, para toda la familia",
+    fb._leer("spotifyApps/0123456789abcdef0123456789abcdef")?.nombre === "Familia de Pruebas");
+  t("tras guardarla con éxito, el modal se cierra", !html().includes("Añadir esta app"));
+  t("la nueva app ya está disponible al instante para el reintento automático (sin recargar nada)",
+    Sp.appsSpotify().some((a) => a.id === "0123456789abcdef0123456789abcdef"));
+
+  // Limpieza: quitamos la app de prueba, restauramos la sesión y salimos.
+  fb._escribir("spotifyApps/0123456789abcdef0123456789abcdef", null);
+  localStorage.setItem("hitster_spotify_token", tokenGuardado);
+  await clic('[data-accion="salir"]', "Salir de la sala de alta de app");
+  fb._escribir(`salas/${codigoAlta}`, null);
+  await esperar(30);
+  t("al borrarse la sala de alta de app, la app vuelve a la pantalla de inicio",
+    html().includes("Crear partida nueva"));
 }
 
 // ------------------------------------------------------------
@@ -655,6 +735,13 @@ fb._escribir(`salas/${codigoRectifica}`, {
 });
 await esperar(40);
 t("se ve la pantalla de revelado de la ronda fabricada", html().includes("ha acertado"));
+// Cuando aciertan, la carta recién ganada ya forma parte de esta misma línea
+// del tiempo: en vez de un marcador de hueco "✓ aquí iba" (que quedaría
+// descolocado, pegado a un lado de la carta real), la carta se resalta
+// directamente con un borde discontinuo — ver htmlLinea/faseRevelado.
+t("al acertar, la carta ganada se resalta directamente en la línea (sin un marcador de hueco aparte)",
+  document.querySelectorAll(".celda-carta.destacada").length === 1
+  && !html().includes("aquí iba"));
 
 await clic('[data-accion="abrirAyuda"]', "Abrir el botón de ayuda (rectificación)");
 t("el botón de ayuda ofrece corregir el año", html().includes("Corregir el año"));

@@ -56,6 +56,8 @@ Si entras ahora, verás una pantalla que dice «falta configurar». Es normal.
    - **Which API/SDKs are you planning to use?**: marca **Web API** y **Web Playback SDK**.
 4. Acepta los términos y pulsa **Save**.
 5. Entra en la app → **Settings**. Copia el **Client ID** (una cadena larga de letras y números).
+   Guárdalo a mano por ahora: lo pegarás dentro del propio juego más adelante (Paso 5), no en
+   ningún archivo de configuración.
 
 > **Importante — límite de 5 personas.** Mientras tu app de Spotify esté en "modo desarrollo"
 > (lo normal, y gratis), **solo 5 cuentas de Spotify pueden usarla**, y hay que añadirlas a mano:
@@ -65,7 +67,8 @@ Si entras ahora, verás una pantalla que dice «falta configurar». Es normal.
 > añadirlas ahí, Spotify les dará error al conectar. Sacar este límite de raíz ("modo extendido")
 > exige ser una empresa registrada con más de 250.000 usuarios activos al mes, así que no es una
 > opción real para jugar en familia — si sois más de 5 aportando canciones, mira la sección
-> **"Más de 5 personas aportando canciones"** más abajo.
+> **"Más de 5 personas aportando canciones"** más abajo: cualquiera puede crear y registrar su
+> propia app de Spotify desde dentro del propio juego, sin volver a este paso ni tocar código.
 
 ---
 
@@ -89,13 +92,23 @@ Sirve para que los iPads se vean entre ellos en tiempo real. Es gratis.
            ".write": true,
            ".validate": "$codigo.matches(/^[0-9]{4}$/)"
          }
+       },
+       "spotifyApps": {
+         ".read": true,
+         "$clientId": {
+           ".write": true,
+           ".validate": "newData.hasChild('nombre')"
+         }
        }
      }
    }
    ```
 
    Pulsa **Publicar**. (Cualquiera que adivine un código de 4 dígitos podría ver esa partida.
-   Para jugar en familia está bien; no se guarda ningún dato personal.)
+   Para jugar en familia está bien; no se guarda ningún dato personal.) El bloque `spotifyApps`
+   es donde se guardan las apps de Spotify que vayáis registrando desde dentro del juego (ver
+   Paso 5 y "Más de 5 personas aportando canciones" más abajo) — sin él, el botón "¿Nunca has
+   jugado con tus canciones?" no podría guardar nada.
 
 5. Ahora la configuración: pulsa el engranaje ⚙️ arriba a la izquierda → **Configuración del proyecto**.
 6. Baja hasta **Tus apps** y pulsa el icono **`</>`** (Web).
@@ -104,22 +117,14 @@ Sirve para que los iPads se vean entre ellos en tiempo real. Es gratis.
 
 ---
 
-## Paso 4 — Pegar las dos cosas en el archivo de configuración
+## Paso 4 — Pegar la configuración de Firebase
 
 1. En tu repositorio de GitHub, entra en la carpeta `js` y pulsa el archivo `config.js`.
 2. Pulsa el lápiz ✏️ (**Edit this file**).
-3. Sustituye:
-
-   - `PEGA_AQUI_TU_CLIENT_ID` por el **Client ID** de Spotify (déjalo entre comillas).
-   - Todo el bloque `FIREBASE_CONFIG` por el que copiaste de Firebase.
-
-   Debe quedar parecido a esto:
+3. Sustituye todo el bloque `FIREBASE_CONFIG` por el que copiaste de Firebase. Debe quedar
+   parecido a esto:
 
    ```js
-   export const SPOTIFY_CLIENT_IDS = [
-     { id: "a1b2c3d4e5f6...", nombre: "Grupo A" },
-   ];
-
    export const FIREBASE_CONFIG = {
      apiKey: "AIzaSy...",
      authDomain: "hitster-familia.firebaseapp.com",
@@ -134,9 +139,23 @@ Sirve para que los iPads se vean entre ellos en tiempo real. Es gratis.
    > Importante: tiene que aparecer `databaseURL`. Si Firebase no te lo dio, cópialo de la
    > pantalla de Realtime Database (es la dirección que sale arriba, empieza por `https://`).
 
+   El **Client ID** de Spotify del Paso 2 **no** se pega aquí — se registra desde dentro del
+   juego, en el paso siguiente.
+
 4. Pulsa **Commit changes**. Espera un minuto a que GitHub republique la web.
 
-**Ya está.** Abre `https://TU-USUARIO.github.io/hitster/` en el iPad.
+---
+
+## Paso 5 — Registrar tu app de Spotify (desde dentro del juego)
+
+1. Abre `https://TU-USUARIO.github.io/hitster/` en el iPad del anfitrión.
+2. En la pantalla de **Crear partida nueva**, pulsa **¿Nunca has jugado con tus canciones?**.
+3. Sigue el Paso 4 de ese cuadro: pega el **Client ID** que copiaste en el Paso 2 de esta guía,
+   ponle un nombre (por ejemplo, el de tu familia) y pulsa **Añadir esta app**.
+
+**Ya está.** Queda guardada en tu base de datos de Firebase, así que solo hace falta hacerlo una
+vez: la próxima vez que alguien abra el juego, ya estará disponible sin que nadie tenga que
+repetir este paso.
 
 ---
 
@@ -144,31 +163,28 @@ Sirve para que los iPads se vean entre ellos en tiempo real. Es gratis.
 
 Spotify solo deja 5 cuentas autorizadas por app "en modo desarrollo" (ver el aviso del Paso 2), y
 no hay forma de subir ese número sin ser una empresa registrada con 250.000+ usuarios al mes — o
-sea, no es una opción real para un juego familiar. La forma de conseguir más hueco es crear una
-**segunda app de Spotify** (Spotify deja hasta 25 apps por cuenta de desarrollador) y repartir a
-la gente entre ambas: 5 en una, 5 en la otra, etc.
+sea, no es una opción real para un juego familiar. La forma de conseguir más hueco es que alguien
+más cree **su propia app de Spotify** (Spotify deja hasta 25 apps por cuenta de desarrollador) y
+la registre en el juego, para dar sitio a 5 personas más.
 
-1. Repite el **Paso 2** (Crear la aplicación de Spotify) para crear una segunda app —mismo
-   **Redirect URI**, el de siempre— y copia su **Client ID**.
-2. En **Settings → User Management** de esta segunda app, añade al segundo grupo de hasta 5
-   personas (los que no cupieron en la primera).
-3. En `js/config.js`, añade una entrada más a la lista, con un nombre que ayude a la gente a
-   saber cuál es la suya (por ejemplo, "Los mayores" / "Los peques", o "Grupo A" / "Grupo B"):
+Esto ya no hace falta hacerlo editando ningún archivo: cualquiera puede hacerlo desde dentro del
+propio juego, con el mismo botón del Paso 5:
 
-   ```js
-   export const SPOTIFY_CLIENT_IDS = [
-     { id: "el-client-id-de-la-primera-app", nombre: "Grupo A" },
-     { id: "el-client-id-de-la-segunda-app", nombre: "Grupo B" },
-   ];
-   ```
+1. En la pantalla de **Crear partida nueva** (o, si ya estáis en el lobby de una partida, junto al
+   botón de aportar canciones de Spotify), pulsa **¿Nunca has jugado con tus canciones?**.
+2. Ese cuadro explica, paso a paso, cómo crear una app de Spotify Developer propia (con el mismo
+   Redirect URI de siempre, que el propio cuadro ya te muestra) y cómo añadir en ella, en
+   **Settings → User Management**, el email de Spotify de hasta 5 personas más.
+3. Al final, pega ahí mismo el Client ID de esa app nueva con un nombre que ayude a identificarla
+   (por ejemplo, "Los mayores" / "Los peques"), y pulsa **Añadir esta app**.
 
-4. Pulsa **Commit changes**. No hace falta decirle a nadie a qué grupo pertenece ni que elija
-   nada: en cuanto haya más de una entrada en la lista, la app prueba sola la primera app
-   configurada y, si esa cuenta no está en su lista de autorizados, lo detecta sola y reintenta
-   automáticamente con la siguiente — la persona solo ve la pantalla de login de Spotify pedirle
-   que entre otra vez, sin ningún selector de por medio.
+En cuanto se añade, queda disponible para todo el mundo, en cualquier dispositivo: no hace falta
+decirle a nadie a qué grupo pertenece ni que elija nada. La próxima vez que alguien conecte
+Spotify, el juego prueba solo la primera app registrada y, si esa cuenta no está en su lista de
+autorizados, lo detecta solo y reintenta automáticamente con la siguiente — la persona solo ve la
+pantalla de login de Spotify pedirle que entre otra vez, sin ningún selector de por medio.
 
-Con una sola entrada en la lista (lo normal, hasta 5 personas), la app no hace nada de esto —
+Con una sola app registrada (lo normal, hasta 5 personas), el juego no hace nada de esto —
 funciona exactamente igual que siempre.
 
 ---

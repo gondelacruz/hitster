@@ -1,7 +1,7 @@
 // ============================================================
 //  HITSTER FAMILIA — aplicación principal
 // ============================================================
-import { AJUSTES, COLORES_EQUIPO, SPOTIFY_CLIENT_IDS, FIREBASE_CONFIG } from "./config.js";
+import { AJUSTES, COLORES_EQUIPO, SPOTIFY_CLIENT_IDS_SEMILLA, FIREBASE_CONFIG } from "./config.js";
 import { CANCIONES } from "./canciones.js";
 import * as R from "./reglas.js";
 import * as Net from "./net.js";
@@ -75,14 +75,21 @@ async function init() {
   const sesion = cargarSesion();
   S.clienteId = sesion.clienteId || (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
 
-  if (!SPOTIFY_CLIENT_IDS.length || SPOTIFY_CLIENT_IDS.some((a) => a.id.includes("PEGA_AQUI"))
-      || String(FIREBASE_CONFIG.databaseURL).includes("PEGA_AQUI")) {
+  if (String(FIREBASE_CONFIG.databaseURL).includes("PEGA_AQUI")) {
     return pintarConfigPendiente();
   }
 
   try {
     await Net.conectar();
     Net.vigilarReloj();
+    // Las apps de Spotify ya no viven en config.js: se guardan en Firebase,
+    // para que cualquiera pueda registrar la suya desde el botón "¿Nunca has
+    // jugado con tus canciones?" sin tocar código. La primera vez (base de
+    // datos recién creada), sembramos lo que hubiera en config.js como
+    // semilla, para no perder una configuración que ya funcionaba.
+    await Net.sembrarAppsSpotifySiHaceFalta(SPOTIFY_CLIENT_IDS_SEMILLA);
+    Sp.fijarAppsSpotify(await Net.leerAppsSpotify());
+    Net.escucharAppsSpotify((lista) => { Sp.fijarAppsSpotify(lista); render(); });
   } catch (e) {
     S.error = "No se pudo conectar con la base de datos. Revisa la configuración de Firebase.";
     return render();
@@ -641,6 +648,28 @@ const acciones = {
 
   desconectarSpotify: () => { Sp.cerrarSesion(); S.spotifyOk = false; },
 
+  /** Abre las instrucciones para registrar una app de Spotify propia (ver LEEME). */
+  abrirAnadirSpotifyApp: () => { S.modal = "anadirSpotifyApp"; S.error = null; },
+
+  /** Guarda en Firebase la app de Spotify que alguien acaba de crearse. */
+  async guardarAppSpotify() {
+    const clientId = (document.getElementById("in-spotify-clientid")?.value || "").trim();
+    const nombre = (document.getElementById("in-spotify-nombre")?.value || "").trim();
+    if (!/^[a-f0-9]{32}$/i.test(clientId)) {
+      S.error = "Ese Client ID no tiene la pinta de uno de Spotify: debería ser una cadena de 32 "
+        + "letras y números, sin espacios ni comillas. Cópialo tal cual de la pantalla Settings de "
+        + "tu app, en el panel de Spotify Developer.";
+      return;
+    }
+    if (!nombre) { S.error = "Ponle un nombre a tu app, para que la gente sepa cuál es la suya."; return; }
+    if (Sp.appsSpotify().some((a) => a.id.toLowerCase() === clientId.toLowerCase())) {
+      S.error = "Esa app ya estaba añadida.";
+      return;
+    }
+    await Net.anadirAppSpotify(clientId, nombre);
+    S.modal = null;
+  },
+
   async crearPartida() {
     const nombre = (document.getElementById("in-nombre")?.value || "").trim() || "Equipo 1";
     const mazo = document.getElementById("in-mazo")?.value || "famosas";
@@ -1030,6 +1059,11 @@ function vistaCrear() {
     : `<div class="aviso info">Necesitas conectar una cuenta de <b>Spotify Premium</b> para que suene la música.
          Solo hace falta en este dispositivo, el que hace de anfitrión.</div>
        <button class="grande" data-accion="conectarSpotify">Conectar Spotify</button>
+       <p class="mini centro" style="margin-top:10px">
+         <button class="sec" style="padding:8px 14px;min-height:auto;font-size:13px" data-accion="abrirAnadirSpotifyApp">
+           ¿Nunca has jugado con tus canciones?
+         </button>
+       </p>
        <div style="height:14px"></div>`;
 
   return cabecera("crear partida") + `
@@ -1152,7 +1186,12 @@ function vistaLobby() {
                     data-accion="cambiarCuentaSpotify" ${S.aportando ? "disabled" : ""}>
               Conectar otra cuenta de Spotify
             </button>
-          </p>` : ""}
+          </p>` : `
+          <p class="mini centro" style="margin-top:10px">
+            <button class="sec" style="padding:8px 14px;min-height:auto;font-size:13px" data-accion="abrirAnadirSpotifyApp">
+              ¿Nunca has jugado con tus canciones?
+            </button>
+          </p>`}
         ${gente ? `
           <div style="height:10px"></div>
           <button class="grande sec" data-accion="verCancionesPool">Ver / quitar canciones aportadas</button>` : ""}
@@ -1170,9 +1209,21 @@ function vistaLobby() {
     <button class="grande sec" data-accion="salir">Salir</button>`;
 }
 
-function barraSuperior() {
+/**
+ * Barra superior con el estado de la sala. `limiteCrono` (opcional) pinta el
+ * cronómetro como una pastilla más, pequeña, en vez del número gigante que
+ * había antes en medio de la pantalla — lo importante durante la partida es
+ * la línea del tiempo, el tiempo solo hace falta verlo de reojo en una
+ * esquina (ver `tic()`, que sigue buscando el mismo id="crono" para
+ * refrescarlo cada segundo, esté donde esté).
+ */
+function barraSuperior(limiteCrono) {
   const mio = miEquipo();
   const activo = equipoActivo();
+  const crono = limiteCrono
+    ? `<span class="pastilla crono-mini" id="crono" data-limite="${limiteCrono}">
+         ⏱ ${reloj((limiteCrono - Net.ahora()) / 1000)}</span>`
+    : "";
   return `
     <div class="barra">
       <span class="pastilla">Sala ${esc(S.codigo)}</span>
@@ -1180,6 +1231,7 @@ function barraSuperior() {
           <span class="punto" style="background:${esc(activo.color.hex)}"></span>
           Turno: ${esc(activo.nombre)}</span>` : ""}
       ${mio ? `<span class="pastilla">${htmlFichas(mio.fichas || 0)}</span>` : ""}
+      ${crono}
       <span class="sep"></span>
       <button class="sec" style="padding:9px 18px;min-height:auto;font-size:14px" data-accion="verOtros">Otros equipos</button>
       <button class="sec" style="padding:9px 18px;min-height:auto;font-size:14px" data-accion="salir">Salir</button>
@@ -1222,22 +1274,22 @@ function vistaJuego() {
       + `ventaja sobre el segundo para ganar.`)
     : "";
 
-  if (r.subfase === "colocando") return barraSuperior() + desempate + faseColocando(r, activo, soyActivo, timeline) + botonAyuda();
-  if (r.subfase === "saltando")  return barraSuperior() + desempate + faseSaltando(r);
-  if (r.subfase === "robando")   return barraSuperior() + desempate + faseRobando(r, activo, soyActivo, timeline) + botonAyuda();
+  if (r.subfase === "colocando") return barraSuperior(r.limite) + desempate + faseColocando(r, activo, soyActivo, timeline) + botonAyuda();
+  if (r.subfase === "saltando")  return barraSuperior(r.limiteSalto || null) + desempate + faseSaltando(r, activo, timeline);
+  if (r.subfase === "robando")   return barraSuperior(r.limiteRobo || null) + desempate + faseRobando(r, activo, soyActivo, timeline) + botonAyuda();
   return barraSuperior() + desempate + faseRevelado(r, activo, soyActivo, timeline) + botonAyuda();
 }
 
 /** Se ha decidido saltar: enseñamos la carta boca arriba un momento antes de cambiarla. */
-function faseSaltando(r) {
+function faseSaltando(r, activo, timeline) {
   const carta = r.carta || {};
-  const crono = r.limiteSalto
-    ? `<div class="crono" id="crono" data-limite="${r.limiteSalto}">${reloj((r.limiteSalto - Net.ahora()) / 1000)}</div>`
-    : "";
   return `
+    <div class="tarjeta">
+      <h3>Línea del tiempo de ${esc(activo.nombre)}</h3>
+      ${htmlLinea(timeline)}
+    </div>
     <div class="tarjeta centro">
       <h2>Esta era la canción</h2>
-      ${crono}
       <div style="max-width:210px;margin:0 auto">${htmlCarta(carta)}</div>
       <p class="mini" style="margin-top:10px">Cambiando de canción…</p>
     </div>`;
@@ -1250,20 +1302,24 @@ function botonAyuda() {
 
 function faseColocando(r, activo, soyActivo, timeline) {
   const mio = miEquipo();
-  const crono = `<div class="crono" id="crono" data-limite="${r.limite}">${reloj((r.limite - Net.ahora()) / 1000)}</div>`;
+  // El dorso ya no es protagonista: un icono pequeño de acompañamiento basta,
+  // lo importante ahora es la línea del tiempo (ver htmlLinea más abajo, con
+  // cartas más grandes) y el cronómetro vive en la barra superior.
+  const dorsoMini = `<div class="carta-mini">${htmlDorso()}</div>`;
 
   if (!soyActivo) {
     return `
-      <div class="tarjeta centro">
-        <h2>Suena la canción…</h2>
-        ${crono}
-        <p><b>${esc(activo.nombre)}</b> está decidiendo en qué año colocarla.</p>
-        <div style="max-width:180px;margin:0 auto">${htmlDorso()}</div>
-        ${controlesMusica()}
-      </div>
       <div class="tarjeta">
         <h3>Línea del tiempo de ${esc(activo.nombre)}</h3>
         ${htmlLinea(timeline)}
+      </div>
+      <div class="tarjeta centro fila-estado">
+        ${dorsoMini}
+        <div class="estado-texto">
+          <h2>Suena la canción…</h2>
+          <p><b>${esc(activo.nombre)}</b> está decidiendo en qué año colocarla.</p>
+          ${controlesMusica()}
+        </div>
       </div>`;
   }
 
@@ -1271,13 +1327,6 @@ function faseColocando(r, activo, soyActivo, timeline) {
   const elegibles = soyLider ? new Set(Array.from({ length: timeline.length + 1 }, (_, i) => i)) : new Set();
   const puedeSaltar = soyLider && (mio.fichas || 0) >= AJUSTES.fichasParaSaltar;
   return `
-    <div class="tarjeta centro">
-      <h2>¡Os toca!</h2>
-      ${crono}
-      <p>Escuchad la canción y elegid el hueco donde creéis que va según su año.</p>
-      <div style="max-width:180px;margin:0 auto">${htmlDorso()}</div>
-      ${controlesMusica()}
-    </div>
     <div class="tarjeta">
       <h3>Vuestra línea del tiempo</h3>
       ${htmlLinea(timeline, { elegibles, elegido: S.slot })}
@@ -1290,6 +1339,14 @@ function faseColocando(r, activo, soyActivo, timeline) {
         </div>
         ${S.slot == null ? '<p class="mini" style="margin-top:10px">Toca uno de los huecos con «+».</p>' : ""}`
       : '<p class="mini" style="margin-top:10px">Solo quien creó el equipo puede colocar la carta. Los demás podéis animar y opinar 🙂</p>'}
+    </div>
+    <div class="tarjeta centro fila-estado">
+      ${dorsoMini}
+      <div class="estado-texto">
+        <h2>¡Os toca!</h2>
+        <p>Escuchad la canción y elegid el hueco donde creéis que va según su año.</p>
+        ${controlesMusica()}
+      </div>
     </div>`;
 }
 
@@ -1316,9 +1373,6 @@ function faseRobando(r, activo, soyActivo, timeline) {
     : null;
 
   const enTurno = E.equipos[r.turnoRobo];
-  const crono = r.limiteRobo
-    ? `<div class="crono" id="crono" data-limite="${r.limiteRobo}">${reloj((r.limiteRobo - Net.ahora()) / 1000)}</div>`
-    : "";
 
   let panel;
   if (soyActivo) {
@@ -1348,14 +1402,17 @@ function faseRobando(r, activo, soyActivo, timeline) {
     ${(mio.fichas || 0) < 1 ? '<p class="mini">No os quedan fichas para robar.</p>' : ""}` : "";
 
   return `
-    <div class="tarjeta centro">${panel}${crono}
-      <div style="max-width:180px;margin:10px auto 0">${htmlDorso()}</div>
-      ${controlesMusica()}
-    </div>
     <div class="tarjeta">
       <h3>Línea del tiempo de ${esc(activo.nombre)}</h3>
       ${htmlLinea(timeline, { elegibles, elegido: S.slot, marcas })}
       ${botones}
+    </div>
+    <div class="tarjeta centro fila-estado">
+      <div class="carta-mini">${htmlDorso()}</div>
+      <div class="estado-texto">
+        ${panel}
+        ${controlesMusica()}
+      </div>
     </div>`;
 }
 
@@ -1365,13 +1422,27 @@ function faseRevelado(r, activo, soyActivo, timeline) {
   const validos = new Set(res.slotsValidos || []);
   const ganador = res.ganadorCarta ? E.equipos[res.ganadorCarta] : null;
 
+  // Si el equipo activo ha acertado, su carta recién ganada ya forma parte de
+  // ESTA MISMA línea del tiempo (se insertó de verdad al resolver la ronda),
+  // así que los huecos "✓ aquí iba"/"✗" —calculados sobre la línea de ANTES
+  // de insertarla— quedarían descolocados (el marcador aparecía pegado a un
+  // lado de la carta, en vez de sobre ella). En ese caso resaltamos
+  // directamente la carta ganada con un borde verde discontinuo y no
+  // pintamos huecos. Si ha fallado, la carta NO se añade a esta línea (se la
+  // lleva otro equipo o se descarta), así que los huecos siguen alineados
+  // con la línea tal cual se ve aquí, y los dejamos como estaban.
   const marcas = {};
-  for (const i of validos) marcas[i] = { texto: "✓", sub: "aquí iba", clase: "correcto" };
-  if (r.colocacion != null && !validos.has(r.colocacion)) {
-    marcas[r.colocacion] = { texto: "✗", sub: activo.nombre, clase: "fallo" };
-  }
-  for (const it of res.intentos || []) {
-    if (!it.correcto) marcas[it.slot] = { texto: "✗", sub: E.equipos[it.equipo]?.nombre || "", clase: "fallo" };
+  let cartaDestacada = null;
+  if (res.aciertoActivo) {
+    cartaDestacada = (c) => c.titulo === carta.titulo && c.artista === carta.artista && c.anio === carta.anio;
+  } else {
+    for (const i of validos) marcas[i] = { texto: "✓", sub: "aquí iba", clase: "correcto" };
+    if (r.colocacion != null && !validos.has(r.colocacion)) {
+      marcas[r.colocacion] = { texto: "✗", sub: activo.nombre, clase: "fallo" };
+    }
+    for (const it of res.intentos || []) {
+      if (!it.correcto) marcas[it.slot] = { texto: "✗", sub: E.equipos[it.equipo]?.nombre || "", clase: "fallo" };
+    }
   }
 
   let titular, clase;
@@ -1404,13 +1475,15 @@ function faseRevelado(r, activo, soyActivo, timeline) {
       : aviso("info", "Esperando a que continúen…")}` : "";
 
   return `
-    <div class="tarjeta centro">
-      ${aviso(clase, titular)}
-      <div style="max-width:210px;margin:0 auto">${htmlCarta(carta)}</div>
-    </div>
     <div class="tarjeta">
       <h3>Línea del tiempo de ${esc(activo.nombre)}</h3>
-      ${htmlLinea(timeline, { marcas })}
+      ${htmlLinea(timeline, { marcas, cartaDestacada })}
+    </div>
+    <div class="tarjeta centro fila-estado">
+      <div class="carta-mini">${htmlCarta(carta)}</div>
+      <div class="estado-texto">
+        ${aviso(clase, titular)}
+      </div>
     </div>
     ${bonus}${esperandoOtros}${siguiente}`;
 }
@@ -1462,6 +1535,46 @@ function modal() {
          una canción rota/errónea sin gastar fichas, reintentar que suene la música si no ha sonado
          (por ejemplo, porque Spotify no tenía ningún dispositivo activo), o revisar la lista de
          canciones de Spotify que ha aportado el grupo y quitar las que sean una tontería.</p>
+      <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
+  }
+
+  if (S.modal === "anadirSpotifyApp") {
+    const nApps = Sp.appsSpotify().length;
+    cuerpo = `
+      <h2>¿Nunca has jugado con tus canciones de Spotify?</h2>
+      <p class="mini">Spotify solo deja que cada "aplicación" tenga hasta 5 personas autorizadas.
+        ${nApps ? `Ahora mismo hay ${nApps} aplicaci${nApps === 1 ? "ón" : "ones"} registrada${nApps === 1 ? "" : "s"}, `
+          + `así que si ya no os cabéis, ` : "Si "}en un par de minutos puedes crear la tuya propia y dar
+        sitio a 5 personas más (tú incluido). Solo hace falta hacerlo una vez.</p>
+
+      <p><b>Paso 1.</b> Entra en
+        <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a>
+        con tu cuenta de Spotify (si es la primera vez, se crea sola al entrar).</p>
+
+      <p><b>Paso 2.</b> Pulsa <b>Create app</b>. Ponle el nombre que quieras y, en
+        <b>Redirect URIs</b>, pega <u>exactamente</u> esta dirección (tócala para seleccionarla entera
+        y cópiala):</p>
+      <div class="tarjeta" style="word-break:break-all;font-family:ui-monospace,monospace;font-size:14px;margin-bottom:14px">
+        ${esc(Sp.redirectUri())}
+      </div>
+      <p class="mini">Marca <b>Web API</b> y <b>Web Playback SDK</b>, acepta los términos y guarda.</p>
+
+      <p><b>Paso 3.</b> Ya dentro de tu app nueva, ve a <b>Settings → User Management</b> y añade el
+        email de Spotify de cada persona que vaya a jugar contigo con esta app (hasta 5; tú no hace
+        falta que te añadas, como creador ya tienes acceso).</p>
+
+      <p><b>Paso 4.</b> Vuelve a <b>Settings</b>, copia el <b>Client ID</b> de tu app y pégalo aquí,
+        con un nombre para identificarla (por ejemplo, "Familia García"):</p>
+      <label for="in-spotify-clientid">Client ID</label>
+      <input id="in-spotify-clientid" placeholder="a1b2c3d4e5f6…" autocapitalize="off" autocorrect="off" />
+      <label for="in-spotify-nombre">Nombre para identificarla</label>
+      <input id="in-spotify-nombre" maxlength="24" placeholder="Familia García" />
+      <div style="height:14px"></div>
+      <button class="grande" data-accion="guardarAppSpotify">Añadir esta app</button>
+      <p class="mini" style="margin-top:10px">En cuanto la añadas, cualquiera de esas personas — o tú
+        mismo — ya puede conectar su Spotify con el botón de siempre: el juego prueba solo todas las
+        apps registradas hasta encontrar una que le deje entrar, sin preguntar nada.</p>
+      <div style="height:6px"></div>
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
   }
 
@@ -1555,12 +1668,13 @@ function pintarConfigPendiente() {
   app.innerHTML = cabecera("falta configurar") + `
     <div class="tarjeta">
       ${aviso("error", "La app todavía no está configurada.")}
-      <p>Abre el archivo <b>js/config.js</b> y pega:</p>
-      <p>1. El <b>Client ID</b> de tu aplicación de Spotify Developer.<br>
-         2. La configuración de tu proyecto de <b>Firebase</b>.</p>
+      <p>Abre el archivo <b>js/config.js</b> y pega ahí la configuración de tu proyecto de
+        <b>Firebase</b> (el Client ID de Spotify ya no hace falta tocarlo aquí: se añade con un
+        botón dentro del propio juego, la primera vez que alguien intente conectar Spotify).</p>
       <p>Tienes las instrucciones paso a paso en el archivo <b>LEEME.md</b>.</p>
-      <h3>Dato que te pedirá Spotify</h3>
-      <p>En el panel de Spotify, en <i>Redirect URIs</i>, pega exactamente esto:</p>
+      <h3>Dato que te pedirá Spotify más adelante</h3>
+      <p>Cuando crees tu app en el panel de Spotify Developer, en <i>Redirect URIs</i> pega
+        exactamente esto:</p>
       <div class="tarjeta" style="word-break:break-all;font-family:ui-monospace,monospace;font-size:14px">
         ${esc(Sp.redirectUri())}
       </div>

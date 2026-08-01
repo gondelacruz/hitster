@@ -2,12 +2,16 @@
 //  SPOTIFY — login (PKCE, sin servidor), búsqueda y reproducción
 //  Solo el anfitrión necesita conectar Spotify, y necesita Premium.
 // ============================================================
-import { SPOTIFY_CLIENT_IDS } from "./config.js";
-
-// Reexportado por si hace falta desde fuera (diagnóstico, LEEME, etc.). Con
-// una sola app configurada (lo normal), todo esto es transparente: nadie
-// nota que existe.
-export { SPOTIFY_CLIENT_IDS };
+// ---------- apps de Spotify configuradas ----------
+// Ya NO viven hardcodeadas en config.js: se guardan en Firebase (ver
+// Net.leerAppsSpotify/escucharAppsSpotify/anadirAppSpotify) para que
+// cualquiera pueda registrar la suya propia desde dentro del juego, sin
+// tocar código. `app.js` las carga al arrancar con `fijarAppsSpotify` y las
+// mantiene al día en cuanto alguien registra una nueva.
+let apps = [];
+/** Lista actual de apps de Spotify disponibles: [{id, nombre}, ...]. */
+export const appsSpotify = () => apps;
+export function fijarAppsSpotify(lista) { apps = Array.isArray(lista) ? lista : []; }
 
 // ---------- varias apps de Spotify (por el límite de 5 usuarios) ----------
 // Con más de una app configurada, no hace falta preguntarle a nadie "¿a cuál
@@ -29,7 +33,7 @@ function marcarIntentado(id) {
 /** Client ID configurado que aún no hayamos probado en este intento, o null si ya probamos todos. */
 export function siguienteAppSinProbar() {
   const ya = idsIntentados();
-  return SPOTIFY_CLIENT_IDS.find((a) => !ya.includes(a.id))?.id || null;
+  return apps.find((a) => !ya.includes(a.id))?.id || null;
 }
 /** Se llama cuando una app SÍ ha funcionado, para que la próxima vez se vuelva a probar desde la primera. */
 export function limpiarIntentados() {
@@ -114,7 +118,7 @@ async function fetchConLimite(url, opciones = {}) {
  * con una sola app configurada, siempre es la única que hay.
  */
 export async function iniciarLogin(clientId) {
-  const id = clientId || siguienteAppSinProbar() || SPOTIFY_CLIENT_IDS[0]?.id;
+  const id = clientId || siguienteAppSinProbar() || apps[0]?.id;
   marcarIntentado(id);
   const verifier = aleatorio(64);
   sessionStorage.setItem("hitster_verifier", verifier);
@@ -152,7 +156,7 @@ export async function procesarVuelta() {
   const verifier = sessionStorage.getItem("hitster_verifier");
   // Con qué Client ID nos fuimos a autorizar (lo guardó `iniciarLogin`); si
   // por lo que sea no está, asumimos la primera app configurada.
-  const clientId = sessionStorage.getItem("hitster_spotify_client") || SPOTIFY_CLIENT_IDS[0]?.id;
+  const clientId = sessionStorage.getItem("hitster_spotify_client") || apps[0]?.id;
   history.replaceState({}, "", redirectUri());
   if (!verifier) return false;
 
@@ -183,7 +187,7 @@ function guardarToken(data, clientId) {
     alcance: data.scope || actual.alcance || "",
     // Con qué app (Client ID) se autorizó esta sesión, para poder refrescar
     // el token más adelante con el mismo (ver `token()`).
-    clientId: clientId || actual.clientId || SPOTIFY_CLIENT_IDS[0]?.id,
+    clientId: clientId || actual.clientId || apps[0]?.id,
   }));
 }
 
@@ -222,7 +226,7 @@ export async function token() {
   // Al refrescar hay que usar el MISMO Client ID con el que se autorizó esta
   // sesión (si hay varias apps configuradas, cada una emite sus propios
   // refresh_token y Spotify exige que coincida).
-  const clientId = t.clientId || SPOTIFY_CLIENT_IDS[0]?.id;
+  const clientId = t.clientId || apps[0]?.id;
   const res = await fetchConLimite("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

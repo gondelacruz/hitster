@@ -58,6 +58,48 @@ export function transaccion(codigo, ruta, fn) {
   return runTransaction(ref(db, `salas/${codigo}/${ruta}`), fn);
 }
 
+// ---------- apps de Spotify registradas (compartidas por todas las salas) ----------
+// Antes, los Client ID de Spotify se pegaban a mano en config.js. Ahora viven
+// aquí, en la base de datos, para que cualquiera pueda registrar la suya
+// propia desde dentro del juego (botón "¿Nunca has jugado con tus
+// canciones?", ver app.js) sin tener que tocar ni redesplegar código. Ojo:
+// esto exige que las reglas de Firebase permitan leer/escribir el nodo
+// "spotifyApps" — ver LEEME.md, Paso 3.
+const NODO_APPS_SPOTIFY = "spotifyApps";
+const listaApps = (val) => (val ? Object.entries(val).map(([id, v]) => ({ id, nombre: v?.nombre || "Grupo" })) : []);
+
+/** Todas las apps de Spotify que la familia ha ido registrando hasta ahora. */
+export async function leerAppsSpotify() {
+  const snap = await get(ref(db, NODO_APPS_SPOTIFY));
+  return listaApps(snap.exists() ? snap.val() : null);
+}
+
+/** Se mantiene al día en cuanto alguien registra una app nueva, sin recargar la página. */
+export function escucharAppsSpotify(cb) {
+  return onValue(ref(db, NODO_APPS_SPOTIFY), (snap) => cb(listaApps(snap.exists() ? snap.val() : null)));
+}
+
+/** Registra una app de Spotify nueva para que la use toda la familia (ver acciones.guardarAppSpotify). */
+export async function anadirAppSpotify(clientId, nombre) {
+  await set(ref(db, `${NODO_APPS_SPOTIFY}/${clientId}`), { nombre });
+}
+
+/**
+ * Migración de una sola vez: si nadie ha registrado ninguna app todavía (base
+ * de datos recién creada, o una que ya llevaba tiempo con Client IDs a mano
+ * en config.js), sembramos esos IDs en Firebase para no perder una
+ * configuración que ya estaba funcionando. Si ya hay algo registrado, no
+ * tocamos nada — así que esto es seguro de llamar siempre, en cada arranque.
+ */
+export async function sembrarAppsSpotifySiHaceFalta(semilla) {
+  if (!semilla?.length) return;
+  const actuales = await leerAppsSpotify();
+  if (actuales.length) return;
+  const cambios = {};
+  for (const a of semilla) if (a?.id) cambios[a.id] = { nombre: a.nombre || "Grupo" };
+  if (Object.keys(cambios).length) await update(ref(db, NODO_APPS_SPOTIFY), cambios);
+}
+
 /**
  * Marca este dispositivo como miembro conectado de un equipo (varios
  * dispositivos pueden compartir el mismo equipo). Si cierra la pestaña,

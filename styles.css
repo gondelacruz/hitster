@@ -112,16 +112,30 @@ label { display: block; font-size: 13px; color: var(--texto-suave); margin: 14px
 }
 .carta.dorso .interrogante { font-size: clamp(48px, 9vw, 90px); font-weight: 900; color: var(--acento); }
 
-/* ---------- línea temporal ---------- */
+/* Carta pequeña de acompañamiento (dorso durante la partida, o la carta ya
+   revelada): lo importante es la línea del tiempo grande de abajo, esto solo
+   es apoyo visual, así que se queda chica y a un lado del texto. */
+.carta-mini { width: 84px; flex: 0 0 auto; }
+.fila-estado {
+  display: flex; align-items: center; gap: 16px; text-align: left;
+}
+.fila-estado .estado-texto { flex: 1; min-width: 0; }
+.fila-estado h2 { margin-bottom: 6px; }
+.fila-estado p:last-child { margin-bottom: 0; }
+@media (max-width: 480px) {
+  .fila-estado { flex-direction: column; text-align: center; }
+}
+
+/* ---------- línea temporal (lo principal en pantalla durante la partida) ---------- */
 .linea {
-  display: flex; align-items: stretch; gap: 6px;
-  overflow-x: auto; padding: 6px 2px 16px;
+  display: flex; align-items: stretch; gap: 8px; justify-content: center;
+  overflow-x: auto; padding: 8px 2px 18px;
   scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
 }
-.linea .celda-carta { flex: 0 0 118px; scroll-snap-align: center; }
+.linea .celda-carta { flex: 0 0 clamp(132px, 30vw, 196px); scroll-snap-align: center; }
 
 .hueco {
-  flex: 0 0 62px; align-self: stretch; min-height: 118px;
+  flex: 0 0 clamp(66px, 15vw, 92px); align-self: stretch; min-height: clamp(132px, 30vw, 196px);
   border: 2px dashed rgba(255,255,255,.26); border-radius: 14px;
   background: rgba(255,255,255,.03); color: var(--texto-suave);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -136,6 +150,12 @@ label { display: block; font-size: 13px; color: var(--texto-suave); margin: 14px
 .hueco.correcto { border-style: solid; border-color: var(--ok); background: rgba(67,209,124,.18); color: var(--ok); }
 .hueco.fallo    { border-style: solid; border-color: var(--mal); background: rgba(255,90,95,.16); color: var(--mal); }
 .hueco .marca { font-size: 20px; }
+
+/* Carta que se acaba de ganar, resaltada directamente en vez de con un
+   marcador de hueco aparte (que quedaría descolocado, ver faseRevelado). */
+.celda-carta.destacada .carta {
+  outline: 3px dashed var(--ok); outline-offset: 4px;
+}
 
 /* ---------- fichas ---------- */
 .fichas { display: inline-flex; gap: 5px; align-items: center; }
@@ -160,12 +180,10 @@ label { display: block; font-size: 13px; color: var(--texto-suave); margin: 14px
 }
 .punto { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 auto; }
 
-/* ---------- cronómetro ---------- */
-.crono {
-  font-size: clamp(38px, 8vw, 62px); font-weight: 900; text-align: center;
-  font-variant-numeric: tabular-nums; letter-spacing: .02em; line-height: 1;
-}
-.crono.urgente { color: var(--mal); animation: latido 1s ease-in-out infinite; }
+/* ---------- cronómetro (pastilla pequeña en la barra superior: lo
+   importante en pantalla es la línea del tiempo, no el reloj) ---------- */
+.crono-mini { font-variant-numeric: tabular-nums; font-weight: 900; }
+.crono-mini.urgente { color: var(--mal); animation: latido 1s ease-in-out infinite; }
 @keyframes latido { 50% { opacity: .45; } }
 
 /* ---------- avisos ---------- */
@@ -229,7 +247,5 @@ label { display: block; font-size: 13px; color: var(--texto-suave); margin: 14px
   background: rgba(255,90,95,.14); color: var(--mal); border: 1.5px solid rgba(255,90,95,.4);
 }
 
-@media (max-width: 560px) {
-  .linea .celda-carta { flex: 0 0 96px; }
-  .hueco { flex: 0 0 52px; min-height: 96px; }
-}
+/* Los tamaños de .celda-carta/.hueco ya usan clamp() más arriba, así que se
+   ajustan solos al ancho de pantalla sin necesitar un breakpoint aparte. */
