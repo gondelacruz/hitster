@@ -354,12 +354,14 @@ export function sacarCancion(estado) {
   if (a.length && (!b.length || Math.random() < 0.6)) fuente = a;
   if (!fuente.length) fuente = a.length ? a : b;
   if (!fuente.length) return null;
-  if (fuente === a) {
-    // Antes de elegir dentro del pool de Spotify, miramos qué aportantes ya
-    // han tenido canciones sonando en la partida, para repartir turnos.
-    const usos = usosPorAportante(propias, usadas);
-    return elegirPonderadoPorDecada(fuente, usos);
-  }
+  // El pool de Spotify se elige ahora totalmente al azar (misma lógica que
+  // el mazo curado), sin ponderar por popularidad, década ni reparto de
+  // turnos entre aportantes: con grupos pequeños, cualquier sesgo —por
+  // pequeño que fuera— concentraba las tiradas en las mismas canciones
+  // "seguras" y hacía que se repitieran una y otra vez de partida en
+  // partida. `elegirPonderadoPorDecada`/`elegirPonderado`/`usosPorAportante`
+  // se dejan definidas (con sus propias pruebas) por si algún día se quiere
+  // recuperar ese criterio, pero ya no se usan aquí.
   return fuente[Math.floor(Math.random() * fuente.length)];
 }
 
