@@ -112,12 +112,41 @@ export function sumarFicha(equipo, n = 1) {
   return Math.min(AJUSTES.fichasMaximas, (equipo.fichas || 0) + n);
 }
 
-/** ¿Alguien ha ganado? Devuelve el id del equipo o null. */
-export function comprobarVictoria(equipos) {
-  for (const e of equiposEnOrden(equipos)) {
-    if ((e.cartas || []).length >= AJUSTES.cartasParaGanar) return e.id;
-  }
-  return null;
+// Tope del desempate: como mucho esta cantidad de cartas EXTRA sobre las que
+// hacen falta para ganar. Con 3-4 equipos, el resto también se reparte
+// cartas mientras tanto y diluye la carrera a 2 de ventaja entre los dos de
+// arriba — sin un tope, una partida desafortunada podría alargarse mucho.
+const EXTRA_DESEMPATE = 3;
+
+/**
+ * ¿Alguien ha ganado? Devuelve el id del equipo o null.
+ *
+ * Caso especial: si el equipo que **empezó la partida** (`primerEquipoId`)
+ * es quien llega (o está empatado) al máximo con solo 1 carta de ventaja
+ * sobre el segundo —el típico 10-9—, no se corta ahí: hace falta sacar
+ * 2 de ventaja para ganar, como el "gana por dos" del tenis. Si es
+ * cualquier OTRO equipo el que llega primero a las cartas necesarias, gana
+ * en el momento, como siempre; esta regla solo evita que el equipo que
+ * empezó gane por el margen mínimo, ya que arrancar la partida da una
+ * pequeña ventaja estructural. Para que esto no alargue la partida
+ * indefinidamente, el desempate tiene un tope: si el líder llega a
+ * `cartasParaGanar + EXTRA_DESEMPATE` sin haber sacado esas 2 de ventaja,
+ * gana igualmente con lo que lleve.
+ */
+export function comprobarVictoria(equipos, primerEquipoId) {
+  const conteos = equiposEnOrden(equipos).map((e) => ({ id: e.id, n: (e.cartas || []).length }));
+  const max = Math.max(0, ...conteos.map((c) => c.n));
+  if (max < AJUSTES.cartasParaGanar) return null;
+
+  const primero = conteos.find((c) => c.id === primerEquipoId);
+  const otros = conteos.filter((c) => c.id !== primerEquipoId);
+  const segundoMax = otros.length ? Math.max(...otros.map((c) => c.n)) : 0;
+
+  const enDesempate = primero && primero.n === max && max - segundoMax < 2;
+  if (enDesempate && max < AJUSTES.cartasParaGanar + EXTRA_DESEMPATE) return null;
+
+  const ganador = conteos.find((c) => c.n === max);
+  return ganador ? ganador.id : null;
 }
 
 /** Código de sala de 4 dígitos. */

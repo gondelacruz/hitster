@@ -215,6 +215,20 @@ label { display: block; font-size: 13px; color: var(--texto-suave); margin: 14px
   display: flex; align-items: center; justify-content: center;
 }
 
+/* ---------- lista de canciones aportadas ---------- */
+.lista-pool { max-height: 46vh; overflow-y: auto; margin: 4px 0 6px; }
+.cancion-fila {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.cancion-fila:last-child { border-bottom: 0; }
+.cancion-fila .titulo-cancion { flex: 1; font-weight: 600; font-size: 14.5px; }
+.cancion-fila .quitar {
+  flex: 0 0 auto; width: 34px; height: 34px; min-height: 34px; padding: 0;
+  border-radius: 50%; font-size: 15px; line-height: 1; font-weight: 900;
+  background: rgba(255,90,95,.14); color: var(--mal); border: 1.5px solid rgba(255,90,95,.4);
+}
+
 @media (max-width: 560px) {
   .linea .celda-carta { flex: 0 0 96px; }
   .hueco { flex: 0 0 52px; min-height: 96px; }

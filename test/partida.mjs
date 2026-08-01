@@ -30,8 +30,8 @@ window.confirm = () => true;
 
 // ---------- Spotify falso ----------
 const llamadas = { play: 0, pause: 0, search: 0 };
-const pista = (uri, nombre, anio, artista = "Artista") => ({
-  uri, name: nombre, artists: [{ name: artista }],
+const pista = (uri, nombre, anio, artista = "Artista", popularity = 60) => ({
+  uri, name: nombre, artists: [{ name: artista }], popularity,
   album: { name: "Álbum", release_date: `${anio}-01-01` },
 });
 
@@ -74,7 +74,7 @@ globalThis.fetch = async (url, opciones = {}) => {
   if (u.includes("/v1/me/playlists"))
     return json({ items: [{ id: "pl1", owner: { id: "mi-id-de-prueba" } }] });
   if (u.includes("/v1/playlists/pl1/tracks"))
-    return json({ items: [{ track: pista("spotify:track:playlist-e", "De mi playlist", 2018) }] });
+    return json({ items: [{ track: pista("spotify:track:playlist-e", "De mi playlist", 2018, "Artista", 8) }] });
 
   if (u.includes("/v1/search")) {
     llamadas.search++;
@@ -116,7 +116,7 @@ async function clic(sel, etiqueta = sel) {
   if (!el) throw new Error("No encuentro el botón: " + etiqueta + "\n---\n" + html().slice(0, 1200));
   if (el.disabled) throw new Error("Botón deshabilitado: " + etiqueta);
   el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await esperar(20);
+  await esperar(12);
 }
 
 function sinErrores(donde) {
@@ -170,6 +170,12 @@ t("se incluyen canciones guardadas y de playlists propias, no solo el top",
   && aporte?.canciones.some((c) => c.uri === "spotify:track:playlist-e"));
 t("se incluyen canciones reproducidas recientemente",
   aporte?.canciones.some((c) => c.uri === "spotify:track:reciente-f"));
+t("se guarda la popularidad que da Spotify a cada canción",
+  aporte?.canciones.find((c) => c.uri === "spotify:track:playlist-e")?.popularidad === 8
+  && aporte?.canciones.find((c) => c.uri === "spotify:track:top-a")?.popularidad === 60);
+t("tras aportar con éxito, se ofrece la opción de conectar otra cuenta de Spotify "
+  + "(para cuando varios comparten el mismo móvil)",
+  !!$('[data-accion="cambiarCuentaSpotify"]'));
 
 await clic('[data-accion="salir"]', "Salir del equipo compartido");
 salaAjena = fb._leer(`salas/${codigoAjeno}`);
@@ -282,6 +288,59 @@ const decadasVistas = new Set();
 for (let i = 0; i < 300; i++) decadasVistas.add(App.elegirPonderadoPorDecada(poolMultiDecada).titulo);
 t("la ponderación por década deja salir también lo antiguo, aunque lo moderno sea más popular",
   decadasVistas.size === 2);
+
+// El pool comunitario debe recordar quién aportó cada canción, y
+// "usosPorAportante" debe contar bien cuántas de sus canciones ya sonaron.
+const poolConAportantes = App.poolComunitario(estadoPoolFalso);
+const solaDeP1 = poolConAportantes.find((c) => c.titulo === "Solo de p1");
+t("cada canción guarda quién la aportó", solaDeP1?.aportantes?.has("p1") === true);
+const usosSimulados = App.usosPorAportante(poolConAportantes,
+  { [App.clave({ titulo: "Solo de p1", artista: "Grupo" })]: true });
+t("usosPorAportante cuenta las canciones ya usadas de cada persona", usosSimulados.get("p1") === 1);
+t("a quien no ha sonado nada no se le cuenta ningún uso", !usosSimulados.has("p2"));
+
+// A lo largo de la partida, si una persona ya ha tenido varias canciones y
+// otra ninguna, las siguientes elecciones deben favorecer a la que no ha
+// sonado todavía (para que a todos les toque alguna canción suya).
+const poolRotacion = [
+  { titulo: "De sobreusada", artista: "X", anio: 2000, uri: "ux", peso: 1, personas: 1, aportantes: new Set(["sobreusada"]) },
+  { titulo: "De nueva", artista: "Y", anio: 2000, uri: "uy", peso: 1, personas: 1, aportantes: new Set(["nueva"]) },
+];
+const usosDesequilibrados = new Map([["sobreusada", 5], ["nueva", 0]]);
+let vecesLaNueva = 0;
+const INTENTOS_ROTACION = 3000;
+for (let i = 0; i < INTENTOS_ROTACION; i++) {
+  if (App.elegirPonderado(poolRotacion, usosDesequilibrados).titulo === "De nueva") vecesLaNueva++;
+}
+t("se favorece a los aportantes que todavía no han tenido ninguna canción sonando",
+  vecesLaNueva / INTENTOS_ROTACION > 0.7);
+
+// Se deben preferir canciones medio conocidas: si dos canciones tienen el
+// mismo peso pero una es muy popular y la otra una rareza que solo conoce
+// quien la aportó, debe salir mucho más la popular.
+const poolPopularidad = [
+  { titulo: "Súper rara", artista: "Z", anio: 2000, uri: "ur", peso: 1, personas: 1, popularidad: 3 },
+  { titulo: "Medio famosa", artista: "W", anio: 2000, uri: "uw", peso: 1, personas: 1, popularidad: 70 },
+];
+let vecesLaFamosa = 0;
+const INTENTOS_POPULARIDAD = 3000;
+for (let i = 0; i < INTENTOS_POPULARIDAD; i++) {
+  if (App.elegirPonderado(poolPopularidad).titulo === "Medio famosa") vecesLaFamosa++;
+}
+t("se prefieren canciones medio conocidas frente a rarezas de un solo aportante",
+  vecesLaFamosa / INTENTOS_POPULARIDAD > 0.8);
+t("aun así, una rareza sigue pudiendo salir alguna vez (no se descarta del todo)",
+  vecesLaFamosa / INTENTOS_POPULARIDAD < 1);
+
+// Una canción marcada como "tontería" en `bloqueadas` no debe salir nunca del pool.
+const claveCompartida = App.clave({ titulo: "Compartida", artista: "Grupo" });
+const poolConBloqueo = App.poolComunitario({
+  ...estadoPoolFalso, bloqueadas: { [claveCompartida]: true },
+});
+t("una canción bloqueada desaparece del pool comunitario",
+  !poolConBloqueo.some((c) => App.clave(c) === claveCompartida));
+t("las demás canciones del pool no se ven afectadas por el bloqueo",
+  poolConBloqueo.some((c) => c.titulo === "Solo de p1") && poolConBloqueo.some((c) => c.titulo === "Solo de p2"));
 
 // ------------------------------------------------------------
 //  Corregir el año debe también rectificar quién se queda la carta.
@@ -411,6 +470,110 @@ t("al borrarse la sala de permisos, la app vuelve a la pantalla de inicio",
   html().includes("Crear partida nueva"));
 
 // ------------------------------------------------------------
+//  Aviso de "gana por dos" cuando el equipo que empezó llega a 10 con el
+//  segundo a solo una carta (10-9).
+// ------------------------------------------------------------
+console.log('Comprobando el aviso de "gana por dos"…');
+const codigoDesempate = "9090";
+fb._escribir(`salas/${codigoDesempate}`, {
+  fase: "lobby", hostCliente: "otro-host-desempate", config: { mazo: "famosas" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Los que Empezaron", color: COLORES_EQUIPO[0], orden: 0,
+           fichas: 3, cartas: [], miembros: {} },
+    eq2: { id: "eq2", nombre: "Los Retadores", color: COLORES_EQUIPO[1], orden: 1,
+           fichas: 3, cartas: [], miembros: {} },
+  },
+  usadas: {}, aportes: {}, ronda: null, ganador: null,
+});
+await clic('[data-accion="irUnirse"]', "Unirse para probar el desempate");
+document.getElementById("in-codigo").value = codigoDesempate;
+await clic('[data-accion="buscarSala"]', "Buscar sala de desempate");
+await clic('[data-accion="unirmeEquipo"]', "Unirme a Los que Empezaron");
+
+const cartasDe = (n) => Array.from({ length: n }, (_, i) => ({ titulo: "c" + i, artista: "a", anio: 1970 + i }));
+fb._escribir(`salas/${codigoDesempate}`, {
+  fase: "jugando", hostCliente: "otro-host-desempate", config: { mazo: "famosas" }, primerEquipo: "eq1",
+  equipos: {
+    eq1: { id: "eq1", nombre: "Los que Empezaron", color: COLORES_EQUIPO[0], orden: 0,
+           fichas: 3, cartas: cartasDe(AJUSTES.cartasParaGanar), miembros: { [miId]: true } },
+    eq2: { id: "eq2", nombre: "Los Retadores", color: COLORES_EQUIPO[1], orden: 1,
+           fichas: 3, cartas: cartasDe(AJUSTES.cartasParaGanar - 1), miembros: {} },
+  },
+  usadas: {}, ganador: null,
+  ronda: {
+    n: 1, equipoActivo: "eq2", subfase: "colocando",
+    limite: Date.now() + 60000, colocacion: null, confirmada: false,
+    robos: {}, turnoRobo: null, limiteRobo: 0,
+    secreto: Net.ocultar({ titulo: "Otra", artista: "Z", anio: 2005 }, codigoDesempate),
+    carta: null, resultado: null, esperandoBonus: false, siguientePedida: false, saltar: false,
+  },
+});
+await esperar(40);
+t('con 10-9 a favor de quien empezó, se avisa de "gana por dos"',
+  html().includes("¡Gana por dos!"));
+t("R.comprobarVictoria en ese mismo estado no da ganador todavía",
+  R.comprobarVictoria(fb._leer(`salas/${codigoDesempate}`).equipos, "eq1") === null);
+
+await clic('[data-accion="salir"]', "Salir de la sala de desempate");
+fb._escribir(`salas/${codigoDesempate}`, null);
+await esperar(30);
+t("al borrarse la sala de desempate, la app vuelve a la pantalla de inicio",
+  html().includes("Crear partida nueva"));
+
+// ------------------------------------------------------------
+//  Lista de canciones de Spotify aportadas, con opción de quitarlas.
+// ------------------------------------------------------------
+console.log("Comprobando la lista de canciones de Spotify aportadas…");
+const codigoPool = "5050";
+fb._escribir(`salas/${codigoPool}`, {
+  fase: "lobby", hostCliente: "otro-host-pool", config: { mazo: "spotify" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Equipo Pool", color: COLORES_EQUIPO[0], orden: 0,
+           fichas: 3, cartas: [], miembros: {} },
+  },
+  usadas: {},
+  aportes: {
+    persona1: { nombre: "Persona Uno", canciones: [
+      { titulo: "Canción Rara De Verdad", artista: "Artista Raro", anio: 1988, uri: "u-rara", peso: 1 },
+    ] },
+    persona2: { nombre: "Persona Dos", canciones: [
+      { titulo: "Otra Canción", artista: "Otro Artista", anio: 2015, uri: "u-otra", peso: 1 },
+    ] },
+  },
+  bloqueadas: {}, ronda: null, ganador: null,
+});
+await clic('[data-accion="irUnirse"]', "Unirse para probar la lista de canciones");
+document.getElementById("in-codigo").value = codigoPool;
+await clic('[data-accion="buscarSala"]', "Buscar sala de canciones");
+await clic('[data-accion="unirmeEquipo"]', "Unirme a Equipo Pool");
+await esperar(30);
+
+t("en el lobby aparece el botón para ver/quitar canciones aportadas",
+  !!document.querySelector('[data-accion="verCancionesPool"]'));
+await clic('[data-accion="verCancionesPool"]', "Ver canciones de Spotify aportadas");
+t("la lista muestra título y artista de cada canción",
+  html().includes("Canción Rara De Verdad — Artista Raro") && html().includes("Otra Canción — Otro Artista"));
+t("la lista NO muestra el año de las canciones", !html().includes("1988") && !html().includes("2015"));
+t("la lista NO dice quién aportó cada canción", !html().includes("Persona Uno") && !html().includes("Persona Dos"));
+
+await clic('[data-accion="quitarCancionPool"]', "Quitar una canción de la lista (la primera con ✕)");
+await esperar(30);
+const salaPool = fb._leer(`salas/${codigoPool}`);
+t("al quitar una canción, queda marcada como bloqueada en la sala",
+  Object.keys(salaPool.bloqueadas || {}).length === 1);
+const poolTrasQuitar = App.poolComunitario(salaPool);
+t("la canción quitada ya no aparece en el pool comunitario", poolTrasQuitar.length === 1);
+t("y la que sigue en la lista es la que no se quitó",
+  poolTrasQuitar[0]?.titulo === "Otra Canción");
+
+await clic('[data-accion="cerrarModal"]', "Cerrar la lista de canciones");
+await clic('[data-accion="salir"]', "Salir de la sala de canciones");
+fb._escribir(`salas/${codigoPool}`, null);
+await esperar(30);
+t("al borrarse la sala de canciones, la app vuelve a la pantalla de inicio",
+  html().includes("Crear partida nueva"));
+
+// ------------------------------------------------------------
 //  Ahora sí, la partida real de principio a fin.
 // ------------------------------------------------------------
 await clic('[data-accion="irCrear"]', "Crear partida");
@@ -459,7 +622,7 @@ let vueltas = 0, rondasJugadas = 0, misTurnos = 0, filtraciones2 = 0,
 const rondasVistas = new Set();
 const est = () => fb._leer("salas/" + codigo);
 
-while (est().fase === "jugando" && vueltas++ < 4000) {
+while (est().fase === "jugando" && vueltas++ < 2500) {
   const E = est();
   const r = E.ronda;
   if (!r) { await esperar(20); continue; }
@@ -470,8 +633,13 @@ while (est().fase === "jugando" && vueltas++ < 4000) {
   // La carta boca abajo NO debe filtrar ni el año ni el título en la pantalla.
   if (secreto && (r.subfase === "colocando" || r.subfase === "robando")) {
     const pantalla = html();
-    // (el año y el artista pueden repetirse con cartas ya ganadas; el título no)
-    if (pantalla.includes(secreto.titulo)) filtraciones++;
+    // (el año y el artista pueden repetirse con cartas ya ganadas; el título
+    // normalmente no, salvo el rarísimo caso de dos canciones distintas con
+    // el mismo título pero artista diferente ya colocadas en algún tablero
+    // —pasa una vez en el mazo curado ("Bailando")—, que no cuenta como fuga).
+    const yaColocado = Object.values(E.equipos)
+      .some((eq) => (eq.cartas || []).some((c) => c.titulo === secreto.titulo));
+    if (!yaColocado && pantalla.includes(secreto.titulo)) filtraciones++;
   }
 
   if (r.subfase === "colocando") {
@@ -495,45 +663,57 @@ while (est().fase === "jugando" && vueltas++ < 4000) {
       if (E.equipos[MI].fichas >= AJUSTES.fichasParaSaltar && misTurnos === 1) {
         saltosHechos++;
         await clic('[data-accion="saltar"]', "Saltar canción");
-        await esperar(20);
-        continue;
+        await esperar(30);
+        t('al saltar (pagando fichas) se ve antes la carta boca arriba 5s',
+          html().includes("Esta era la canción"));
+        continue; // el motor cambiará de canción solo, pasados esos 5s reales
       }
       // Otra vez, probamos el salto gratis (canción rota/errónea) desde el
-      // botón de ayuda: no debe gastar fichas.
+      // botón de ayuda: no debe gastar fichas, y también debe enseñar antes
+      // la carta.
       if (misTurnos === 2) {
         const fichasAntes = E.equipos[MI].fichas;
         await clic('[data-accion="abrirAyuda"]', "Abrir ayuda para saltar gratis");
         await clic('[data-accion="saltarGratis"]', "Cambiar canción gratis");
-        await esperar(20);
+        await esperar(30);
         saltosGratisHechos++;
         t("saltar la canción gratis no gasta fichas", est().equipos[MI].fichas === fichasAntes);
+        t('el salto gratis también enseña la carta antes de cambiarla',
+          html().includes("Esta era la canción"));
         continue;
       }
       const huecos = [...document.querySelectorAll('[data-accion="hueco"]')];
       t("hay un hueco por cada posición posible", huecos.length === timeline.length + 1);
-      const elegido = huecos[rondasJugadas % huecos.length];
+      // Acertamos la mitad de las veces (y no solo un tercio): con partidas
+      // de hasta 3 equipos, un acierto demasiado bajo hace que algunas
+      // partidas simuladas tarden muchísimas rondas en converger por pura
+      // varianza — no es un problema del juego, es de esta prueba.
+      const buenosMI = R.slotsValidos(timeline, secreto.anio);
+      const idxMI = (rondasJugadas % 2 === 0 && buenosMI.length) ? buenosMI[0] : rondasJugadas % huecos.length;
+      const elegido = huecos[idxMI];
       elegido.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-      await esperar(15);
+      await esperar(8);
       await clic('[data-accion="finalizar"]', "Finalizar");
     } else {
-      // Otro equipo coloca desde su dispositivo.
+      // Otro equipo coloca desde su dispositivo. Igual que arriba: acierta
+      // la mitad de las veces para que las partidas converjan con fiabilidad.
       const buenos = R.slotsValidos(timeline, secreto.anio);
-      const slot = rondasJugadas % 3 === 0 && buenos.length
+      const slot = rondasJugadas % 2 === 0 && buenos.length
         ? buenos[0] : rondasJugadas % (timeline.length + 1);
       await fb.update(fb.ref(null, `salas/${codigo}/ronda`), { colocacion: slot, confirmada: true });
     }
-    await esperar(25);
+    await esperar(15);
     continue;
   }
 
   if (r.subfase === "robando") {
     const turno = r.turnoRobo;
-    if (!turno) { await esperar(20); continue; }
+    if (!turno) { await esperar(12); continue; }
     if (turno === MI) {
       const huecos = [...document.querySelectorAll('[data-accion="hueco"]')];
       if (huecos.length && E.equipos[MI].fichas >= 1 && rondasJugadas % 2 === 0) {
         huecos[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-        await esperar(15);
+        await esperar(8);
         robosHechos++;
         await clic('[data-accion="robar"]', "Robar");
       } else {
@@ -546,7 +726,7 @@ while (est().fase === "jugando" && vueltas++ < 4000) {
       const roba = E.equipos[turno].fichas >= 1 && libres.length && rondasJugadas % 3 !== 0;
       fb._escribir(`salas/${codigo}/ronda/robos/${turno}`, roba ? libres[0] : "pasa");
     }
-    await esperar(25);
+    await esperar(15);
     continue;
   }
 
@@ -610,13 +790,13 @@ while (est().fase === "jugando" && vueltas++ < 4000) {
         fb._escribir(`salas/${codigo}/ronda/esperandoBonus`, false);
         fb._escribir(`salas/${codigo}/equipos/${activo}/fichas`, R.sumarFicha(eq));
       }
-      await esperar(25);
+      await esperar(15);
       continue;
     }
 
     sinErrores("revelado");
     await clic('[data-accion="siguiente"]', "Siguiente ronda");
-    await esperar(45);
+    await esperar(28);
     continue;
   }
 

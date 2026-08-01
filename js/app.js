@@ -153,24 +153,51 @@ export const clave = (c) => `${c.titulo}|${c.artista}`.toLowerCase().replace(/[.
  * total) para que quien haya aportado muchas más canciones —más playlists,
  * más historial— no acapare el mazo: cada persona "pesa" lo mismo en total,
  * y dentro de su lista se respeta qué canciones le gustan más. Las canciones
- * que varias personas tienen en común suman sus pesos normalizados y además
- * cuentan cuánta gente las aportó, para priorizarlas después.
+ * que varias personas tienen en común (misma canción en playlists o tops de
+ * gente distinta) suman sus pesos normalizados y además cuentan cuánta gente
+ * las aportó, para priorizarlas después. Guardamos también quién exactamente
+ * aportó cada canción (`aportantes`), para poder repartir turnos entre
+ * personas a lo largo de la partida (ver `usosPorAportante`), y la
+ * `popularidad` que le da Spotify (0-100), para poder preferir canciones
+ * medio conocidas frente a rarezas que solo ha escuchado quien la aportó
+ * (ver `elegirPonderado`). Las canciones que el grupo haya marcado como
+ * "tontería" desde la lista del botón «?» (`estado.bloqueadas`, por clave)
+ * se excluyen aquí directamente, así que no vuelven a salir en ninguna
+ * partida siguiente sin tocar nada más.
  */
 export function poolComunitario(estado) {
-  const aportes = Object.values(estado.aportes || {});
+  const aportes = Object.entries(estado.aportes || {});
+  const bloqueadas = estado.bloqueadas || {};
   const mapa = new Map();
-  for (const aporte of aportes) {
+  for (const [clienteId, aporte] of aportes) {
     const canciones = aporte.canciones || [];
     const totalPersona = canciones.reduce((s, c) => s + Math.max(1, c.peso || 1), 0) || 1;
     for (const c of canciones) {
       const k = clave(c);
+      if (bloqueadas[k]) continue;
       const pesoNorm = Math.max(1, c.peso || 1) / totalPersona;
       const actual = mapa.get(k);
-      if (actual) { actual.peso += pesoNorm; actual.personas += 1; }
-      else mapa.set(k, { ...c, mazo: "top", peso: pesoNorm, personas: 1 });
+      if (actual) { actual.peso += pesoNorm; actual.personas += 1; actual.aportantes.add(clienteId); }
+      else mapa.set(k, { ...c, mazo: "top", peso: pesoNorm, personas: 1, aportantes: new Set([clienteId]) });
     }
   }
   return [...mapa.values()];
+}
+
+/**
+ * Cuántas canciones del pool comunitario ya usadas en la partida vino de
+ * cada persona (por `clienteId`). Sirve para, al elegir la siguiente,
+ * favorecer a quien todavía no ha sonado nada, en vez de dejar que sea puro
+ * azar y algún aportante se quede sin oír ninguna canción suya en toda la
+ * partida.
+ */
+export function usosPorAportante(pool, usadas) {
+  const usos = new Map();
+  for (const c of pool) {
+    if (!usadas[clave(c)] || !c.aportantes) continue;
+    for (const id of c.aportantes) usos.set(id, (usos.get(id) || 0) + 1);
+  }
+  return usos;
 }
 
 /** Resumen para mostrar en el lobby: cuánta gente ha aportado y cuántas coinciden. */
@@ -207,9 +234,29 @@ export function baraja(config, estado) {
  * persona (fracciones pequeñas), así que aquí no forzamos un mínimo de 1 —
  * eso borraría esa normalización. Las canciones del mazo curado no traen
  * `peso` y valen 1 cada una, como siempre.
+ *
+ * `usos` (opcional, Map clienteId -> nº de canciones suyas ya sonadas) se
+ * usa para bajar el peso de quien ya ha tenido varias canciones en la
+ * partida y subir el de quien todavía no ha tenido ninguna, para que los
+ * aportantes de Spotify se turnen en vez de que unos pocos acaparen todo.
  */
-export function elegirPonderado(lista) {
-  const pesos = lista.map((c) => Math.max(0.0001, c.peso ?? 1) * (c.personas > 1 ? c.personas * 6 : 1));
+export function elegirPonderado(lista, usos = null) {
+  const pesos = lista.map((c) => {
+    let p = Math.max(0.0001, c.peso ?? 1) * (c.personas > 1 ? c.personas * 6 : 1);
+    // Preferimos canciones medio conocidas: si tenemos la popularidad que le
+    // da Spotify (0-100), la usamos para no sacar rarezas que solo conoce
+    // quien la aportó. No la descartamos del todo —sigue siendo su
+    // favorita—, solo la hacemos bastante menos probable cuanto más
+    // desconocida sea.
+    if (typeof c.popularidad === "number") {
+      p *= Math.max(0.15, c.popularidad / 100);
+    }
+    if (usos && c.aportantes && c.aportantes.size) {
+      const usadoMin = Math.min(...[...c.aportantes].map((id) => usos.get(id) || 0));
+      p /= (1 + usadoMin);
+    }
+    return p;
+  });
   const total = pesos.reduce((a, b) => a + b, 0);
   let r = Math.random() * total;
   for (let i = 0; i < lista.length; i++) { r -= pesos[i]; if (r <= 0) return lista[i]; }
@@ -225,7 +272,7 @@ const PESO_DECADA = { 1950: 1, 1960: 2 };
 const PESO_DECADA_NORMAL = 4;
 const decadaDe = (anio) => Math.floor(anio / 10) * 10;
 
-export function elegirPonderadoPorDecada(lista) {
+export function elegirPonderadoPorDecada(lista, usos = null) {
   if (!lista.length) return null;
   const porDecada = new Map();
   for (const c of lista) {
@@ -239,7 +286,7 @@ export function elegirPonderadoPorDecada(lista) {
   let r = Math.random() * total;
   let elegida = decadas[decadas.length - 1];
   for (let i = 0; i < decadas.length; i++) { r -= pesos[i]; if (r <= 0) { elegida = decadas[i]; break; } }
-  return elegirPonderado(porDecada.get(elegida));
+  return elegirPonderado(porDecada.get(elegida), usos);
 }
 
 export function sacarCancion(estado) {
@@ -251,7 +298,13 @@ export function sacarCancion(estado) {
   if (a.length && (!b.length || Math.random() < 0.6)) fuente = a;
   if (!fuente.length) fuente = a.length ? a : b;
   if (!fuente.length) return null;
-  return fuente === a ? elegirPonderadoPorDecada(fuente) : fuente[Math.floor(Math.random() * fuente.length)];
+  if (fuente === a) {
+    // Antes de elegir dentro del pool de Spotify, miramos qué aportantes ya
+    // han tenido canciones sonando en la partida, para repartir turnos.
+    const usos = usosPorAportante(propias, usadas);
+    return elegirPonderadoPorDecada(fuente, usos);
+  }
+  return fuente[Math.floor(Math.random() * fuente.length)];
 }
 
 /** Elige una canción y encuentra su URI en Spotify (reintenta si no la encuentra). */
@@ -292,7 +345,7 @@ async function motorPaso() {
     if (r.saltar) {
       if (hecho.saltada === r.limite) return;
       hecho.saltada = r.limite;
-      return void (await nuevaCancionEnRonda());
+      return void (await empezarRevelacionSalto());
     }
     if (r.confirmada || t > r.limite) {
       await Net.actualizar(S.codigo, {
@@ -301,6 +354,17 @@ async function motorPaso() {
         "ronda/turnoRobo": null,
         "ronda/limiteRobo": 0,
       });
+    }
+    return;
+  }
+
+  // --- fase 1b: se decidió saltar; enseñamos la carta 5s antes de cambiarla ---
+  if (r.subfase === "saltando") {
+    if (t > r.limiteSalto) {
+      const idSalto = r.n + ":" + r.limiteSalto;
+      if (hecho.saltoResuelto === idSalto) return;
+      hecho.saltoResuelto = idSalto;
+      return void (await terminarSalto());
     }
     return;
   }
@@ -333,7 +397,7 @@ async function motorPaso() {
   if (r.subfase === "revelado" && r.siguientePedida) {
     if (hecho.lanzada === r.n) return;
     hecho.lanzada = r.n;
-    const ganador = R.comprobarVictoria(E.equipos);
+    const ganador = R.comprobarVictoria(E.equipos, E.primerEquipo);
     if (ganador) {
       await Sp.pausar().catch(() => {});
       return void (await Net.actualizar(S.codigo, { fase: "fin", ganador, ronda: null }));
@@ -393,22 +457,45 @@ async function nuevaRonda(equipoId) {
       esperandoBonus: false,
       siguientePedida: false,
       saltar: false,
+      limiteSalto: 0,
     },
   });
   sonar(carta.uri);
 }
 
-/** Cambia la canción de la ronda actual (al saltar). */
-async function nuevaCancionEnRonda() {
+/**
+ * Al saltar una canción (con o sin fichas), primero la enseñamos boca arriba
+ * 5 segundos —para que se sepa cuál era— y solo después pasamos a la
+ * siguiente. Se hace en dos pasos: aquí revelamos y paramos la música;
+ * `terminarSalto` (llamado por el motor cuando pasan los 5s) es quien saca
+ * la carta nueva de verdad.
+ */
+async function empezarRevelacionSalto() {
+  const secreto = Net.revelar(E.ronda.secreto, S.codigo);
+  await Sp.pausar().catch(() => {});
+  await Net.actualizar(S.codigo, {
+    "ronda/subfase": "saltando",
+    "ronda/carta": secreto ? { titulo: secreto.titulo, artista: secreto.artista, anio: secreto.anio } : null,
+    "ronda/limiteSalto": Net.ahora() + 5000,
+  });
+}
+
+/** Segundo paso del salto: pasados los 5s de ver la carta, sacamos una nueva. */
+async function terminarSalto() {
   const elegida = await siguienteCancion(E);
-  if (!elegida) return;
+  if (!elegida) {
+    return void (await Net.actualizar(S.codigo, { fase: "fin", ganador: null, motivo: "sincanciones" }));
+  }
   const { carta, usadas } = elegida;
   await Net.actualizar(S.codigo, {
     usadas,
     "ronda/secreto": Net.ocultar(carta, S.codigo),
+    "ronda/carta": null,
+    "ronda/subfase": "colocando",
     "ronda/limite": Net.ahora() + AJUSTES.segundosTurno * 1000,
     "ronda/colocacion": null,
     "ronda/saltar": false,
+    "ronda/limiteSalto": 0,
   });
   sonar(carta.uri);
 }
@@ -474,7 +561,7 @@ const acciones = {
           fichas: AJUSTES.fichasIniciales, cartas: [], miembros: { [S.clienteId]: true },
         },
       },
-      usadas: {}, aportes: {}, ronda: null, ganador: null,
+      usadas: {}, aportes: {}, bloqueadas: {}, ronda: null, ganador: null,
     });
     S.codigo = codigo; S.equipoId = equipoId; guardar(); entrarEnSala();
   },
@@ -562,6 +649,29 @@ const acciones = {
     S.aportando = false; S.info = null;
   },
 
+  /**
+   * Si varias personas comparten el mismo móvil o iPad para aportar sus
+   * canciones (una detrás de otra), la sesión de Spotify guardada en ese
+   * dispositivo sería siempre la de la primera persona que se conectó. Este
+   * botón desconecta esa cuenta y manda a conectar una distinta antes de
+   * aportar.
+   */
+  cambiarCuentaSpotify() {
+    Sp.cerrarSesion();
+    sessionStorage.setItem("hitster_volver_a", "aportar");
+    return Sp.iniciarLogin();
+  },
+
+  /** Abre la lista de canciones de Spotify aportadas por el grupo (título — artista). */
+  verCancionesPool() { S.modal = "cancionesPool"; },
+
+  /** Marca una canción como "tontería": desaparece del pool en esta sala, también si jugáis otra partida. */
+  async quitarCancionPool(el) {
+    const k = el.dataset.clave;
+    if (!k) return;
+    await Net.escribir(S.codigo, `bloqueadas/${k}`, true);
+  },
+
   // ----- reproducción (solo anfitrión) -----
   pausar() { Sp.pausar(); },
 
@@ -581,8 +691,12 @@ const acciones = {
         titulo: elegida.carta.titulo, artista: elegida.carta.artista, anio: elegida.carta.anio,
       }];
     }
-    await Net.actualizar(S.codigo, { equipos: nuevos, usadas, fase: "jugando" });
-    await nuevaRonda(equipos[Math.floor(Math.random() * equipos.length)].id);
+    // Guardamos quién empieza: si ese equipo acaba ganando 10-9, hace falta
+    // sacar 2 de ventaja (ver R.comprobarVictoria) para que no gane solo por
+    // la pequeña ventaja de haber arrancado la partida.
+    const primerEquipoId = equipos[Math.floor(Math.random() * equipos.length)].id;
+    await Net.actualizar(S.codigo, { equipos: nuevos, usadas, fase: "jugando", primerEquipo: primerEquipoId });
+    await nuevaRonda(primerEquipoId);
   },
 
   // ----- turno -----
@@ -753,7 +867,9 @@ const acciones = {
     if (!soyHost()) return;
     const nuevos = JSON.parse(JSON.stringify(E.equipos));
     for (const id of Object.keys(nuevos)) { nuevos[id].cartas = []; nuevos[id].fichas = AJUSTES.fichasIniciales; }
-    await Net.actualizar(S.codigo, { equipos: nuevos, usadas: {}, fase: "lobby", ganador: null, ronda: null });
+    await Net.actualizar(S.codigo, {
+      equipos: nuevos, usadas: {}, fase: "lobby", ganador: null, ronda: null, primerEquipo: null,
+    });
   },
 };
 
@@ -926,6 +1042,16 @@ function vistaLobby() {
         <button class="grande sec" data-accion="aportarSpotify" ${S.aportando ? "disabled" : ""}>
           ${Sp.haySesion() && !Sp.faltanPermisos() ? "Añadir mis canciones de Spotify" : "Conectar mi Spotify y aportar mis canciones"}
         </button>
+        ${Sp.haySesion() && !Sp.faltanPermisos() ? `
+          <p class="mini centro" style="margin-top:10px">¿Sois varios usando el mismo móvil?
+            <button class="sec" style="padding:8px 14px;min-height:auto;font-size:13px;margin-left:4px"
+                    data-accion="cambiarCuentaSpotify" ${S.aportando ? "disabled" : ""}>
+              Conectar otra cuenta de Spotify
+            </button>
+          </p>` : ""}
+        ${gente ? `
+          <div style="height:10px"></div>
+          <button class="grande sec" data-accion="verCancionesPool">Ver / quitar canciones aportadas</button>` : ""}
       </div>` : ""}
 
     ${host ? `
@@ -964,16 +1090,53 @@ function controlesMusica() {
     </div>`;
 }
 
+/**
+ * ¿Estamos en "gana por dos"? Pasa cuando el equipo que empezó la partida ha
+ * llegado (o está empatado) a las cartas necesarias para ganar pero con
+ * menos de 2 de ventaja sobre el segundo — ver R.comprobarVictoria.
+ */
+function enModoDesempate() {
+  if (!E?.primerEquipo || !E.equipos?.[E.primerEquipo]) return false;
+  const primeroN = (E.equipos[E.primerEquipo].cartas || []).length;
+  if (primeroN < AJUSTES.cartasParaGanar) return false;
+  const otros = Object.entries(E.equipos)
+    .filter(([id]) => id !== E.primerEquipo)
+    .map(([, e]) => (e.cartas || []).length);
+  const segundoMax = otros.length ? Math.max(...otros) : 0;
+  return primeroN >= segundoMax && primeroN - segundoMax < 2;
+}
+
 function vistaJuego() {
   const r = E.ronda;
   if (!r) return `<div class="tarjeta centro"><span class="gira">♪</span> Preparando la ronda…</div>`;
   const activo = equipoActivo();
   const soyActivo = r.equipoActivo === S.equipoId;
   const timeline = R.ordenar(activo.cartas || []);
+  const desempate = enModoDesempate()
+    ? aviso("info", `¡Gana por dos! <b>${esc(E.equipos[E.primerEquipo]?.nombre || "")}</b> llegó a `
+      + `${AJUSTES.cartasParaGanar} pero, por haber empezado la partida, necesita sacar 2 cartas de `
+      + `ventaja sobre el segundo para ganar.`)
+    : "";
 
-  if (r.subfase === "colocando") return barraSuperior() + faseColocando(r, activo, soyActivo, timeline) + botonAyuda();
-  if (r.subfase === "robando")   return barraSuperior() + faseRobando(r, activo, soyActivo, timeline) + botonAyuda();
-  return barraSuperior() + faseRevelado(r, activo, soyActivo, timeline) + botonAyuda();
+  if (r.subfase === "colocando") return barraSuperior() + desempate + faseColocando(r, activo, soyActivo, timeline) + botonAyuda();
+  if (r.subfase === "saltando")  return barraSuperior() + desempate + faseSaltando(r);
+  if (r.subfase === "robando")   return barraSuperior() + desempate + faseRobando(r, activo, soyActivo, timeline) + botonAyuda();
+  return barraSuperior() + desempate + faseRevelado(r, activo, soyActivo, timeline) + botonAyuda();
+}
+
+/** Se ha decidido saltar: enseñamos la carta boca arriba un momento antes de cambiarla. */
+function faseSaltando(r) {
+  const carta = r.carta || {};
+  const crono = r.limiteSalto
+    ? `<div class="crono" id="crono" data-limite="${r.limiteSalto}">${reloj((r.limiteSalto - Net.ahora()) / 1000)}</div>`
+    : "";
+  return `
+    <div class="tarjeta centro">
+      <h2>Esta era la canción</h2>
+      ${crono}
+      <div style="max-width:210px;margin:0 auto">${htmlCarta(carta)}</div>
+      <p class="mini" style="margin-top:10px">Cambiando de canción…</p>
+    </div>`;
 }
 
 /** Botón flotante en la esquina: corregir el año o saltar una canción con problemas. */
@@ -1184,11 +1347,17 @@ function modal() {
       <p><b>Fichas:</b> empezáis con ${AJUSTES.fichasIniciales} (máximo ${AJUSTES.fichasMaximas}).
          Si acertáis el año y además el artista y el título, ganáis una.
          Podéis gastar ${AJUSTES.fichasParaSaltar} para saltar una canción que no conocéis.</p>
+      <p><b>Gana por dos:</b> si el equipo que empezó la partida es quien llega primero a
+         ${AJUSTES.cartasParaGanar} cartas pero el segundo se queda a solo una (10-9), no se corta ahí:
+         se sigue jugando hasta que alguien saque 2 cartas de ventaja. Si es cualquier otro equipo el que
+         llega primero, gana en el momento, como siempre. Tiene un tope, eso sí: para que no se alargue de
+         más, gana igualmente al llegar a ${AJUSTES.cartasParaGanar + 3}.</p>
       <p><b>Equipos con varios dispositivos:</b> todo el que se une a un equipo puede aportar sus canciones
          de Spotify, pero solo quien lo creó juega los turnos.</p>
       <p><b>El botón "?"</b> de la esquina sirve para corregir un año equivocado de Spotify, cambiar
-         una canción rota/errónea sin gastar fichas, o reintentar que suene la música si no ha sonado
-         (por ejemplo, porque Spotify no tenía ningún dispositivo activo).</p>
+         una canción rota/errónea sin gastar fichas, reintentar que suene la música si no ha sonado
+         (por ejemplo, porque Spotify no tenía ningún dispositivo activo), o revisar la lista de
+         canciones de Spotify que ha aportado el grupo y quitar las que sean una tontería.</p>
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
   }
 
@@ -1197,6 +1366,7 @@ function modal() {
     const puedeCorregir = puedeCorregirAnio();
     const r = E?.ronda;
     const puedeReintentar = soyHost() && !!r && ["colocando", "robando"].includes(r.subfase);
+    const puedeVerPool = ["spotify", "todo"].includes(E?.config?.mazo);
     cuerpo = `
       <h2>¿Algún problema con esta canción?</h2>
       ${puedeReintentar ? `
@@ -1218,9 +1388,29 @@ function modal() {
         <p class="mini">¿Spotify ha puesto un año equivocado (remasterización, recopilatorio…)?</p>
         <button class="grande sec" data-accion="corregirAnio">Corregir el año</button>
         <div style="height:14px"></div>` : ""}
-      ${!puedeSaltar && !puedeCorregir && !puedeReintentar
+      ${puedeVerPool ? `
+        <p class="mini">¿Alguna canción de Spotify que ha aportado el grupo es una tontería o no pega?</p>
+        <button class="grande sec" data-accion="verCancionesPool">Ver canciones de Spotify añadidas</button>
+        <div style="height:14px"></div>` : ""}
+      ${!puedeSaltar && !puedeCorregir && !puedeReintentar && !puedeVerPool
         ? '<p class="mini">Ahora mismo no hay nada que corregir. Vuelve a mirar aquí si suena una canción rota, no suena nada o el año no cuadra.</p>' : ""}
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
+  }
+
+  if (S.modal === "cancionesPool") {
+    const pool = poolComunitario(E || {}).sort((a, b) => a.titulo.localeCompare(b.titulo, "es"));
+    cuerpo = `
+      <h2>Canciones de Spotify añadidas</h2>
+      <p class="mini">Todo lo que ha aportado el grupo. Si alguna es una tontería o no pega en la partida,
+        quitadla con la ✕: no volverá a salir.</p>
+      ${pool.length ? `<div class="lista-pool">${pool.map((c) => `
+        <div class="cancion-fila">
+          <span class="titulo-cancion">${esc(c.titulo)} — ${esc(c.artista)}</span>
+          <button class="quitar" data-accion="quitarCancionPool" data-clave="${esc(clave(c))}"
+                  aria-label="Quitar ${esc(c.titulo)}">✕</button>
+        </div>`).join("")}</div>`
+        : '<p class="mini">Nadie ha aportado canciones todavía.</p>'}
+      <button class="grande sec" data-accion="cerrarModal" style="margin-top:14px">Cerrar</button>`;
   }
 
   if (S.modal === "corregirAnio") {

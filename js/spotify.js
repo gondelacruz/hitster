@@ -235,9 +235,13 @@ export async function pausar() {
  * decimos con un error distinguible (`e.tipo === "permisos"`) en vez de
  * devolver una lista vacía sin más: así la app puede pedir reconectar en
  * lugar de decir "no tienes historial" cuando el problema es otro.
+ *
+ * También guardamos la `popularidad` que da Spotify a cada canción (0-100),
+ * para que luego, al elegir cuál suena, se pueda dar preferencia a las que
+ * más gente conoce y no salgan rarezas que solo ha escuchado quien la aportó.
  */
 export async function misCancionesFavoritas() {
-  const mapa = new Map(); // uri -> {titulo, artista, anio, uri, peso}
+  const mapa = new Map(); // uri -> {titulo, artista, anio, uri, peso, popularidad}
   let huboErrorDePermisos = false;
   const marcarSiEsPermiso = (e) => {
     if (e?.status === 401 || e?.status === 403) huboErrorDePermisos = true;
@@ -246,12 +250,17 @@ export async function misCancionesFavoritas() {
   const sumar = (t, peso) => {
     const anio = parseInt((t.album?.release_date || "").slice(0, 4), 10);
     if (!anio || !t.uri) return;
+    const popularidad = typeof t.popularity === "number" ? t.popularity : undefined;
     const actual = mapa.get(t.uri);
-    if (actual) { actual.peso += peso; return; }
+    if (actual) {
+      actual.peso += peso;
+      if (actual.popularidad === undefined && popularidad !== undefined) actual.popularidad = popularidad;
+      return;
+    }
     mapa.set(t.uri, {
       titulo: t.name,
       artista: t.artists.map((a) => a.name).join(", "),
-      anio, uri: t.uri, peso,
+      anio, uri: t.uri, peso, popularidad,
     });
   };
 
@@ -282,7 +291,7 @@ export async function misCancionesFavoritas() {
     const propias = (listas?.items || []).filter((p) => p.owner?.id === perfilActual.id).slice(0, 15);
     for (const p of propias) {
       try {
-        const r = await api(`/playlists/${p.id}/tracks?limit=50&fields=items(track(name,uri,artists(name),album(release_date)))`);
+        const r = await api(`/playlists/${p.id}/tracks?limit=50&fields=items(track(name,uri,artists(name),album(release_date),popularity))`);
         for (const it of r?.items || []) if (it.track) sumar(it.track, 1);
       } catch (e) { marcarSiEsPermiso(e); /* alguna playlist puede fallar (colaborativa, borrada…) */ }
     }

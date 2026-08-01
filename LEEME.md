@@ -164,15 +164,28 @@ Spotify ni cuenta de nada para jugar.
   **artista y título**; si dicen que sí, ganan una ficha.
 - Si falla, el primer equipo (por orden de juego) que haya acertado el hueco **le roba la carta**.
   Si nadie acierta, la carta se descarta.
-- En vuestro turno podéis gastar **2 fichas** para saltar una canción que no conocéis.
-- **Gana el primer equipo con 10 cartas** bien ordenadas.
+- En vuestro turno podéis gastar **2 fichas** para saltar una canción que no conocéis. Antes de
+  cambiarla, la app **enseña la carta boca arriba 5 segundos** para que sepáis qué canción era, y
+  luego pasa a la siguiente sola.
+- **Gana el primer equipo con 10 cartas** bien ordenadas — con una excepción, ver "Gana por dos"
+  más abajo.
 
 El botón **Otros equipos** enseña las cartas de los demás en cualquier momento.
+
+### Gana por dos
+
+Si el equipo que **empezó la partida** es quien llega primero a 10 cartas pero el segundo se queda
+a solo una (un 10-9), la partida no se corta ahí: hay que seguir jugando hasta que alguien saque
+**2 cartas de ventaja**, como el "gana por dos" del tenis. Veréis un aviso en pantalla mientras dure
+esta situación. Si es **cualquier otro equipo** el que llega primero a 10, gana en el momento, como
+siempre — la regla solo evita que quien empezó la partida gane por el margen mínimo, ya que arrancar
+da una pequeña ventaja. Por si acaso, tiene un tope: si nadie saca esas 2 de ventaja antes de llegar
+a 13 cartas, gana quien más lleve en ese momento (para que la partida no se alargue de más).
 
 ### El botón «?» de la esquina
 
 Durante la partida hay un botón redondo con un **«?»** flotando en la esquina inferior derecha.
-Sirve para dos cosas:
+Sirve para varias cosas:
 
 - **Canción rota o claramente equivocada** (a veces Spotify empareja mal una búsqueda): podéis
   **cambiarla sin gastar fichas**. Solo puede hacerlo el líder del equipo en su turno, o el
@@ -185,6 +198,11 @@ Sirve para dos cosas:
   abre Spotify en el móvil o el altavoz, le da a reproducir algo un segundo para que quede activo, y
   pulsa **Reintentar reproducir** en su propio botón «?». Solo lo ve el anfitrión; el resto de
   jugadores ven un aviso pidiéndoselo.
+- **Canciones de Spotify que no pegan** (mazo «Spotify» o «Todo»): un botón abre la lista de todo lo
+  aportado por el grupo, mostrando solo **título — artista** (sin decir de quién es ni qué año tiene,
+  para no delatar a nadie). Cada canción tiene una **✕** para quitarla si alguien decide que es una
+  tontería; una vez quitada, no vuelve a salir en esa sala. La misma lista está disponible desde la
+  sala de espera, antes de empezar a jugar.
 
 ---
 
@@ -214,7 +232,26 @@ que solo escucháis vosotros dos por separado.
 Antes de sumar, la app **normaliza el peso de cada persona**: si alguien conecta su Spotify y aporta
 muchísimas más canciones que otro (más historial, más playlists), no acapara el mazo. Cada persona
 "pesa" lo mismo en el reparto global; solo dentro de su propia lista se respeta qué le gusta más.
-Así, con dos personas, no debería salir casi todo de una sola.
+Además, durante la partida la app **se acuerda de qué aportante ya ha tenido canciones sonando** y
+favorece a quien todavía no ha tenido ninguna, para que a todo el que se una con su Spotify le suene
+algo suyo en algún momento, en vez de dejarlo todo al azar.
+
+La app también usa la **popularidad** que le da Spotify a cada canción (un dato de 0 a 100, cuánta
+gente la escucha) para preferir canciones **medio conocidas** frente a rarezas que solo ha
+escuchado quien las aportó — así es más probable que el resto del grupo pueda reconocerlas y
+jugar. No las descarta del todo: una canción muy personal y poco conocida sigue pudiendo salir de
+vez en cuando, solo que con menos frecuencia.
+
+¿Vais a usar el **mismo móvil varias personas** para aportar (por ejemplo, para probarlo vosotros
+mismos)? Después de aportar aparece un botón **Conectar otra cuenta de Spotify**: sin él, el
+dispositivo se quedaría con la sesión de la primera persona que se conectó y no habría forma de que
+otra persona aportara la suya desde ahí.
+
+¿Alguna canción de las aportadas es una tontería, un error o simplemente no pega con la partida?
+Desde la sala de espera (botón **Ver / quitar canciones aportadas**) o, ya en la partida, desde el
+botón «?», podéis abrir la lista completa de canciones del grupo (solo título y artista, sin decir
+de quién es ni el año) y quitar cualquiera con la ✕. Una vez quitada, no vuelve a salir en esa sala,
+ni siquiera si jugáis otra partida ahí.
 
 Para acertar mejor con lo que de verdad te gusta, cada aportación mezcla varias fuentes de Spotify:
 tu top de los últimos años, tu top de los últimos 6 meses, lo que has **escuchado recientemente**,

@@ -117,6 +117,33 @@ const cartas = (...anios) => anios.map((a, i) => ({ titulo: "c" + i, artista: "a
   };
   t("gana con 10 cartas", R.comprobarVictoria(eqs) === "A");
   t("sin ganador devuelve null", R.comprobarVictoria({ B: eqs.B }) === null);
+
+  const conCartas = (n) => new Array(n).fill({ anio: 1 });
+  const dosEquipos = (nA, nB) => ({
+    A: { id: "A", orden: 0, cartas: conCartas(nA) },
+    B: { id: "B", orden: 1, cartas: conCartas(nB) },
+  });
+  const N = AJUSTES.cartasParaGanar;
+
+  t("gana por dos: si el que empezó llega 10-9, todavía no gana",
+    R.comprobarVictoria(dosEquipos(N, N - 1), "A") === null);
+  t("gana por dos: con 2 de ventaja (11-9) el que empezó ya gana",
+    R.comprobarVictoria(dosEquipos(N + 1, N - 1), "A") === "A");
+  t("gana por dos: empatados a 10 el que empezó tampoco gana todavía",
+    R.comprobarVictoria(dosEquipos(N, N), "A") === null);
+  t("gana por dos: si el que empezó llega a 10 con ya 2+ de ventaja, gana en el momento",
+    R.comprobarVictoria(dosEquipos(N, N - 2), "A") === "A");
+  t("gana por dos: si es OTRO equipo el que llega 10-9 (no el que empezó), gana normal",
+    R.comprobarVictoria(dosEquipos(N - 1, N), "A") === "B");
+  t("sin indicar quién empezó, se gana en el momento de siempre (compatibilidad)",
+    R.comprobarVictoria(dosEquipos(N, N - 1)) === "A");
+
+  // El desempate tiene un tope: no puede alargar la partida indefinidamente
+  // (con 3-4 equipos el resto también se reparte cartas mientras tanto).
+  t("gana por dos: justo por debajo del tope, todavía sin 2 de ventaja, sigue sin ganador",
+    R.comprobarVictoria(dosEquipos(N + 2, N + 1), "A") === null);
+  t("gana por dos: al llegar al tope sin sacar 2 de ventaja, gana igualmente quien más lleva",
+    R.comprobarVictoria(dosEquipos(N + 3, N + 2), "A") === "A");
 }
 
 // ------------------------------------------------------------------- código
