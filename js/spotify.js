@@ -2,7 +2,13 @@
 //  SPOTIFY — login (PKCE, sin servidor), búsqueda y reproducción
 //  Solo el anfitrión necesita conectar Spotify, y necesita Premium.
 // ============================================================
-import { SPOTIFY_CLIENT_ID } from "./config.js";
+import { SPOTIFY_CLIENT_IDS } from "./config.js";
+
+// Reexportado para que app.js pueda pintar un selector de "con qué app te
+// conectas" cuando haya más de una configurada (ver config.js). Con una sola
+// app (lo normal), la app no muestra ningún selector: todo funciona igual
+// que siempre.
+export { SPOTIFY_CLIENT_IDS };
 
 export const SCOPES = [
   "user-read-private",
@@ -76,11 +82,23 @@ async function fetchConLimite(url, opciones = {}) {
   }
 }
 
-export async function iniciarLogin() {
+/**
+ * Empieza el login con Spotify. Si tenéis más de una app configurada (ver
+ * `SPOTIFY_CLIENT_IDS` en config.js), hay que decir con cuál — quien llama a
+ * esto (app.js) ya se habrá encargado de preguntarlo si hacía falta. Si no
+ * se indica ninguno, se usa la primera de la lista (el caso normal, con una
+ * sola app configurada).
+ */
+export async function iniciarLogin(clientId) {
+  const id = clientId || SPOTIFY_CLIENT_IDS[0]?.id;
   const verifier = aleatorio(64);
   sessionStorage.setItem("hitster_verifier", verifier);
+  // Nos acordamos de con qué app nos hemos ido, para poder canjear el código
+  // (y luego refrescar el token) con ese mismo Client ID — Spotify exige que
+  // sea siempre el mismo a lo largo de todo el proceso.
+  sessionStorage.setItem("hitster_spotify_client", id);
   const params = new URLSearchParams({
-    client_id: SPOTIFY_CLIENT_ID,
+    client_id: id,
     response_type: "code",
     redirect_uri: redirectUri(),
     scope: SCOPES,
@@ -107,6 +125,9 @@ export async function procesarVuelta() {
   }
   if (!code) return false;
   const verifier = sessionStorage.getItem("hitster_verifier");
+  // Con qué Client ID nos fuimos a autorizar (lo guardó `iniciarLogin`); si
+  // por lo que sea no está, asumimos la primera app configurada.
+  const clientId = sessionStorage.getItem("hitster_spotify_client") || SPOTIFY_CLIENT_IDS[0]?.id;
   history.replaceState({}, "", redirectUri());
   if (!verifier) return false;
 
@@ -114,7 +135,7 @@ export async function procesarVuelta() {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: SPOTIFY_CLIENT_ID,
+      client_id: clientId,
       grant_type: "authorization_code",
       code,
       redirect_uri: redirectUri(),
@@ -122,11 +143,11 @@ export async function procesarVuelta() {
     }),
   });
   if (!res.ok) throw new Error("No se pudo completar el login de Spotify.");
-  guardarToken(await res.json());
+  guardarToken(await res.json(), clientId);
   return true;
 }
 
-function guardarToken(data) {
+function guardarToken(data, clientId) {
   const actual = leerToken() || {};
   localStorage.setItem(LS, JSON.stringify({
     access_token: data.access_token,
@@ -135,6 +156,9 @@ function guardarToken(data) {
     // Spotify solo manda "scope" al autorizar (no siempre al refrescar), así
     // que si no viene, conservamos el que ya teníamos guardado.
     alcance: data.scope || actual.alcance || "",
+    // Con qué app (Client ID) se autorizó esta sesión, para poder refrescar
+    // el token más adelante con el mismo (ver `token()`).
+    clientId: clientId || actual.clientId || SPOTIFY_CLIENT_IDS[0]?.id,
   }));
 }
 
@@ -170,17 +194,21 @@ export async function token() {
   if (!t) throw new Error("Sin sesión de Spotify");
   if (Date.now() < t.expira) return t.access_token;
 
+  // Al refrescar hay que usar el MISMO Client ID con el que se autorizó esta
+  // sesión (si hay varias apps configuradas, cada una emite sus propios
+  // refresh_token y Spotify exige que coincida).
+  const clientId = t.clientId || SPOTIFY_CLIENT_IDS[0]?.id;
   const res = await fetchConLimite("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: SPOTIFY_CLIENT_ID,
+      client_id: clientId,
       grant_type: "refresh_token",
       refresh_token: t.refresh_token,
     }),
   });
   if (!res.ok) { cerrarSesion(); throw new Error("La sesión de Spotify ha caducado."); }
-  guardarToken(await res.json());
+  guardarToken(await res.json(), clientId);
   return leerToken().access_token;
 }
 

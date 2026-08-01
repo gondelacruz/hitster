@@ -57,8 +57,15 @@ Si entras ahora, verás una pantalla que dice «falta configurar». Es normal.
 4. Acepta los términos y pulsa **Save**.
 5. Entra en la app → **Settings**. Copia el **Client ID** (una cadena larga de letras y números).
 
-> Si quiere hacer de anfitrión otra persona de la familia, ve a **Settings → User Management**
-> y añade su nombre y su email de Spotify. Sin eso, Spotify le dará error al conectar.
+> **Importante — límite de 5 personas.** Mientras tu app de Spotify esté en "modo desarrollo"
+> (lo normal, y gratis), **solo 5 cuentas de Spotify pueden usarla**, y hay que añadirlas a mano:
+> ve a **Settings → User Management**, pulsa **Add new user** y pon el nombre y el email de
+> Spotify de cada persona que vaya a conectar su cuenta (el anfitrión, y cualquiera que aporte
+> sus canciones). Es un paso único por persona, no hay que repetirlo en cada partida. Sin
+> añadirlas ahí, Spotify les dará error al conectar. Sacar este límite de raíz ("modo extendido")
+> exige ser una empresa registrada con más de 250.000 usuarios activos al mes, así que no es una
+> opción real para jugar en familia — si sois más de 5 aportando canciones, mira la sección
+> **"Más de 5 personas aportando canciones"** más abajo.
 
 ---
 
@@ -109,7 +116,9 @@ Sirve para que los iPads se vean entre ellos en tiempo real. Es gratis.
    Debe quedar parecido a esto:
 
    ```js
-   export const SPOTIFY_CLIENT_ID = "a1b2c3d4e5f6...";
+   export const SPOTIFY_CLIENT_IDS = [
+     { id: "a1b2c3d4e5f6...", nombre: "Grupo A" },
+   ];
 
    export const FIREBASE_CONFIG = {
      apiKey: "AIzaSy...",
@@ -128,6 +137,38 @@ Sirve para que los iPads se vean entre ellos en tiempo real. Es gratis.
 4. Pulsa **Commit changes**. Espera un minuto a que GitHub republique la web.
 
 **Ya está.** Abre `https://TU-USUARIO.github.io/hitster/` en el iPad.
+
+---
+
+## Más de 5 personas aportando canciones
+
+Spotify solo deja 5 cuentas autorizadas por app "en modo desarrollo" (ver el aviso del Paso 2), y
+no hay forma de subir ese número sin ser una empresa registrada con 250.000+ usuarios al mes — o
+sea, no es una opción real para un juego familiar. La forma de conseguir más hueco es crear una
+**segunda app de Spotify** (Spotify deja hasta 25 apps por cuenta de desarrollador) y repartir a
+la gente entre ambas: 5 en una, 5 en la otra, etc.
+
+1. Repite el **Paso 2** (Crear la aplicación de Spotify) para crear una segunda app —mismo
+   **Redirect URI**, el de siempre— y copia su **Client ID**.
+2. En **Settings → User Management** de esta segunda app, añade al segundo grupo de hasta 5
+   personas (los que no cupieron en la primera).
+3. En `js/config.js`, añade una entrada más a la lista, con un nombre que ayude a la gente a
+   saber cuál es la suya (por ejemplo, "Los mayores" / "Los peques", o "Grupo A" / "Grupo B"):
+
+   ```js
+   export const SPOTIFY_CLIENT_IDS = [
+     { id: "el-client-id-de-la-primera-app", nombre: "Grupo A" },
+     { id: "el-client-id-de-la-segunda-app", nombre: "Grupo B" },
+   ];
+   ```
+
+4. Pulsa **Commit changes**. En cuanto haya más de una entrada en la lista, la próxima vez que
+   alguien conecte Spotify (o pulse "Conectar otra cuenta de Spotify"), la app le preguntará con
+   cuál de los grupos hacerlo, antes de mandarle a la pantalla de Spotify. Dile a cada persona a
+   cuál pertenece (el que tú decidiste al añadirla en el paso 2).
+
+Con una sola entrada en la lista (lo normal, hasta 5 personas), la app no pregunta nada — funciona
+exactamente igual que siempre.
 
 ---
 

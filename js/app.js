@@ -1,7 +1,7 @@
 // ============================================================
 //  HITSTER FAMILIA — aplicación principal
 // ============================================================
-import { AJUSTES, COLORES_EQUIPO, SPOTIFY_CLIENT_ID, FIREBASE_CONFIG } from "./config.js";
+import { AJUSTES, COLORES_EQUIPO, SPOTIFY_CLIENT_IDS, FIREBASE_CONFIG } from "./config.js";
 import { CANCIONES } from "./canciones.js";
 import * as R from "./reglas.js";
 import * as Net from "./net.js";
@@ -75,7 +75,8 @@ async function init() {
   const sesion = cargarSesion();
   S.clienteId = sesion.clienteId || (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
 
-  if (SPOTIFY_CLIENT_ID.includes("PEGA_AQUI") || String(FIREBASE_CONFIG.databaseURL).includes("PEGA_AQUI")) {
+  if (!SPOTIFY_CLIENT_IDS.length || SPOTIFY_CLIENT_IDS.some((a) => a.id.includes("PEGA_AQUI"))
+      || String(FIREBASE_CONFIG.databaseURL).includes("PEGA_AQUI")) {
     return pintarConfigPendiente();
   }
 
@@ -532,6 +533,20 @@ function uriRondaActual() {
   return r.carta?.uri || null;
 }
 
+/**
+ * Empieza el login con Spotify. Si solo hay una app configurada (lo normal),
+ * va directo, como siempre. Si hay más de una — porque sois muchos aportando
+ * canciones y os hizo falta crear una segunda app para no toparos con el
+ * límite de 5 usuarios de Spotify — primero pregunta con cuál conectarse.
+ */
+function elegirAppSpotify(volverA) {
+  sessionStorage.setItem("hitster_volver_a", volverA);
+  if (SPOTIFY_CLIENT_IDS.length <= 1) {
+    return Sp.iniciarLogin(SPOTIFY_CLIENT_IDS[0]?.id);
+  }
+  S.modal = "elegirApp";
+}
+
 // ============================================================
 //  ACCIONES DEL JUGADOR
 // ============================================================
@@ -543,9 +558,14 @@ const acciones = {
   verReglas: () => { S.modal = "reglas"; },
   cerrarModal: () => { S.modal = null; S.modalEquipo = null; },
 
-  conectarSpotify: () => {
-    sessionStorage.setItem("hitster_volver_a", "crear");
-    return Sp.iniciarLogin();
+  conectarSpotify: () => elegirAppSpotify("crear"),
+
+  /** Se elige una app concreta desde el selector (solo aparece si hay más de una configurada). */
+  elegirApp(el) {
+    const app = SPOTIFY_CLIENT_IDS[Number(el.dataset.indice)];
+    S.modal = null;
+    if (!app) return;
+    return Sp.iniciarLogin(app.id);
   },
 
   desconectarSpotify: () => { Sp.cerrarSesion(); S.spotifyOk = false; },
@@ -633,8 +653,7 @@ const acciones = {
     // (re)conectar para que Spotify pida esos permisos.
     if (!Sp.haySesion() || Sp.faltanPermisos()) {
       Sp.cerrarSesion();
-      sessionStorage.setItem("hitster_volver_a", "aportar");
-      return Sp.iniciarLogin();
+      return elegirAppSpotify("aportar");
     }
     S.aportando = true; S.info = "Leyendo tus canciones de Spotify (esto puede tardar un poco)…"; render();
     try {
@@ -681,8 +700,7 @@ const acciones = {
    */
   cambiarCuentaSpotify() {
     Sp.cerrarSesion();
-    sessionStorage.setItem("hitster_volver_a", "aportar");
-    return Sp.iniciarLogin();
+    return elegirAppSpotify("aportar");
   },
 
   /** Abre la lista de canciones de Spotify aportadas por el grupo (título — artista). */
@@ -1418,6 +1436,18 @@ function modal() {
       ${!puedeSaltar && !puedeCorregir && !puedeReintentar && !puedeVerPool
         ? '<p class="mini">Ahora mismo no hay nada que corregir. Vuelve a mirar aquí si suena una canción rota, no suena nada o el año no cuadra.</p>' : ""}
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
+  }
+
+  if (S.modal === "elegirApp") {
+    cuerpo = `
+      <h2>¿Con qué grupo te dio de alta la familia?</h2>
+      <p class="mini">Sois muchos aportando canciones de Spotify, así que hay más de una app configurada
+        (Spotify solo deja 5 personas por app). Si no lo sabes, pregunta a quien organiza la partida.</p>
+      ${SPOTIFY_CLIENT_IDS.map((a, i) => `
+        <button class="grande sec" data-accion="elegirApp" data-indice="${i}" style="margin-bottom:10px">
+          ${esc(a.nombre)}
+        </button>`).join("")}
+      <button class="grande sec" data-accion="cerrarModal">Cancelar</button>`;
   }
 
   if (S.modal === "cancionesPool") {

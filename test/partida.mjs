@@ -102,6 +102,7 @@ const Sp = await import("../js/spotify.js");
 
 localStorage.setItem("hitster_spotify_token", JSON.stringify({
   access_token: "tok", refresh_token: "ref", expira: Date.now() + 3.6e6, alcance: Sp.SCOPES,
+  clientId: Sp.SPOTIFY_CLIENT_IDS[0]?.id,
 }));
 
 // ---------- arrancamos la app ----------
@@ -109,6 +110,13 @@ const fb = await import("./stubs/firebase.mjs");
 const Net = await import("../js/net.js");
 const R = await import("../js/reglas.js");
 const { AJUSTES, COLORES_EQUIPO } = await import("../js/config.js");
+// Importante: los módulos reales (app.js, spotify.js) reciben config.js
+// REDIRIGIDO a este doble de prueba (ver test/hooks.mjs). Si aquí lo
+// importáramos como "../js/config.js" en vez de por esta misma ruta,
+// obtendríamos una copia distinta del array `SPOTIFY_CLIENT_IDS` — y mutarla
+// (como hace la prueba del selector multi-app, más abajo) no tendría ningún
+// efecto en lo que ve app.js.
+const { SPOTIFY_CLIENT_IDS } = await import("./stubs/config.mjs");
 const App = await import("../js/app.js");
 await esperar(20);
 
@@ -258,6 +266,77 @@ console.log("Comprobando que el login a Spotify siempre fuerza ver la pantalla d
   t("el login a Spotify pide 'show_dialog=true' (si no, quien ya había aceptado antes no vería "
     + "la pantalla de permisos y no podría conceder uno nuevo)",
     urlGenerada.includes("show_dialog=true"));
+}
+
+// ------------------------------------------------------------
+//  Con varias apps de Spotify configuradas (para no toparse con el límite de
+//  5 usuarios por app), iniciarLogin debe poder usar la que se le pida, y
+//  acordarse de con cuál para canjear el código después.
+// ------------------------------------------------------------
+console.log("Comprobando que se puede elegir con qué Client ID conectar (varias apps de Spotify)…");
+{
+  const locationDeVerdad = globalThis.location;
+  globalThis.location = { href: "", origin: "https://ejemplo.github.io", pathname: "/hitster/" };
+  await Sp.iniciarLogin("client-id-grupo-b");
+  const urlGenerada = globalThis.location.href;
+  const clienteGuardado = sessionStorage.getItem("hitster_spotify_client");
+  globalThis.location = locationDeVerdad;
+
+  t("iniciarLogin acepta un Client ID concreto y lo manda en la URL de autorización",
+    urlGenerada.includes("client_id=client-id-grupo-b"));
+  t("se recuerda con qué Client ID nos fuimos, para canjear el código con el mismo",
+    clienteGuardado === "client-id-grupo-b");
+}
+
+// ------------------------------------------------------------
+//  Si hay más de una app configurada, la app debe preguntar con cuál
+//  conectarse en vez de ir directa a la primera (para que cada familia use
+//  la que le corresponda). Con una sola configurada (el caso normal), no
+//  debe aparecer ningún selector — se comprueba en el resto de pruebas de
+//  este archivo, que solo tienen una y nunca ven este paso de más.
+// ------------------------------------------------------------
+console.log("Comprobando el selector de 'con qué app conectarte' cuando hay más de una configurada…");
+{
+  SPOTIFY_CLIENT_IDS.push({ id: "client-id-grupo-b", nombre: "Grupo B" });
+  const tokenGuardado = localStorage.getItem("hitster_spotify_token");
+  localStorage.removeItem("hitster_spotify_token"); // forzamos que haga falta (re)conectar
+
+  const codigoMultiApp = "4040";
+  fb._escribir(`salas/${codigoMultiApp}`, {
+    fase: "lobby", hostCliente: "otro-host-multiapp", config: { mazo: "spotify" },
+    equipos: {
+      eq1: { id: "eq1", nombre: "Equipo Multi", color: COLORES_EQUIPO[0], orden: 0,
+             fichas: 3, cartas: [], miembros: {} },
+    },
+    usadas: {}, aportes: {}, ronda: null, ganador: null,
+  });
+  await clic('[data-accion="irUnirse"]', "Unirse para probar el selector multi-app");
+  document.getElementById("in-codigo").value = codigoMultiApp;
+  await clic('[data-accion="buscarSala"]', "Buscar sala multi-app");
+  await clic('[data-accion="unirmeEquipo"]', "Unirme a Equipo Multi");
+
+  await clic('[data-accion="aportarSpotify"]', "Aportar (sin sesión, con 2 apps configuradas)");
+  t("con más de una app configurada, aparece el selector en vez de ir directo a Spotify",
+    document.querySelectorAll('[data-accion="elegirApp"]').length === 2);
+  t("el selector muestra el nombre de cada app configurada",
+    html().includes("Grupo A") && html().includes("Grupo B"));
+
+  const locationDeVerdad2 = globalThis.location;
+  globalThis.location = { href: "", origin: "https://ejemplo.github.io", pathname: "/hitster/" };
+  await clic('[data-accion="elegirApp"][data-indice="1"]', "Elegir Grupo B en el selector");
+  const urlGenerada2 = globalThis.location.href;
+  globalThis.location = locationDeVerdad2;
+  t("al elegir 'Grupo B' en el selector, el login se hace con SU Client ID",
+    urlGenerada2.includes("client_id=client-id-grupo-b"));
+
+  await clic('[data-accion="salir"]', "Salir de la sala multi-app");
+  fb._escribir(`salas/${codigoMultiApp}`, null);
+  await esperar(30);
+  t("al borrarse la sala multi-app, la app vuelve a la pantalla de inicio",
+    html().includes("Crear partida nueva"));
+
+  SPOTIFY_CLIENT_IDS.pop(); // restauramos: solo una app configurada, como espera el resto de pruebas
+  localStorage.setItem("hitster_spotify_token", tokenGuardado); // restauramos la sesión completa
 }
 
 // ------------------------------------------------------------

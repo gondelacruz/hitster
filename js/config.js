@@ -3,8 +3,18 @@
 //  Sigue las instrucciones del archivo LEEME.md
 // ============================================================
 
-// 1) Pega aquí el "Client ID" de tu app de Spotify Developer
-export const SPOTIFY_CLIENT_ID = "6a7b96a2dbe14a2ea0648a9793b69d6d";
+// 1) Pega aquí el "Client ID" de tu app de Spotify Developer.
+//    Con una sola entrada os vale a casi todos. Si sois muchos aportando
+//    canciones y os topáis con el límite de Spotify (una app en modo
+//    desarrollo solo admite 5 personas autorizadas — ver LEEME.md), puedes
+//    crear una SEGUNDA app en developer.spotify.com/dashboard, autorizar en
+//    ella a otro grupo de hasta 5 personas, y añadir su Client ID aquí como
+//    una entrada más. La app dejará elegir con cuál conectarse en cuanto
+//    haya más de una.
+export const SPOTIFY_CLIENT_IDS = [
+  { id: "6a7b96a2dbe14a2ea0648a9793b69d6d", nombre: "Grupo A" },
+  // { id: "PEGA_AQUI_EL_CLIENT_ID_DE_LA_SEGUNDA_APP", nombre: "Grupo B" },
+];
 
 // 2) Pega aquí la configuración de tu proyecto de Firebase
 export const FIREBASE_CONFIG = {
