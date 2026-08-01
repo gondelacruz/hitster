@@ -271,6 +271,54 @@ console.log("Comprobando el diagnóstico cuando Spotify no devuelve canciones ap
 }
 
 // ------------------------------------------------------------
+//  Si Spotify (o algo de por medio: un proxy, un filtro de red, un
+//  bloqueador de anuncios…) responde con texto que no es JSON de verdad, el
+//  error ya no se queda en un misterioso "Unexpected token": se ve el código
+//  real y un trozo del texto, para poder diagnosticarlo de un vistazo.
+// ------------------------------------------------------------
+console.log("Comprobando que una respuesta no-JSON de Spotify se explica con claridad…");
+{
+  const fetchDeVerdad = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false, status: 503, statusText: "Service Unavailable",
+    text: async () => "The service you requested is temporarily unavailable.",
+  });
+  let error = null;
+  try { await Sp.misCancionesFavoritas(); } catch (e) { error = e; }
+  globalThis.fetch = fetchDeVerdad;
+
+  t("una respuesta no-JSON de Spotify muestra el código real y un trozo del texto, no un 'Unexpected token'",
+    (error?.detalle || "").includes("503") && (error?.detalle || "").includes("temporarily unavailable"));
+}
+
+// ------------------------------------------------------------
+//  Si la red falla del todo (tiempo agotado, sin conexión…), la app ya no se
+//  queda "Leyendo tus canciones…" colgada minutos enteros: al primer fallo de
+//  red se corta y no se sigue intentando fuente a fuente sin sentido.
+// ------------------------------------------------------------
+console.log("Comprobando que un fallo de red no deja la app colgada…");
+{
+  const fetchDeVerdad = globalThis.fetch;
+  let llamadasDeRed = 0;
+  globalThis.fetch = async () => {
+    llamadasDeRed++;
+    const e = new Error("simulación de fallo de red");
+    e.name = "AbortError"; // así es como se ve un fetch() cortado por el límite de tiempo
+    throw e;
+  };
+  const inicio = Date.now();
+  let error = null;
+  try { await Sp.misCancionesFavoritas(); } catch (e) { error = e; }
+  const duracion = Date.now() - inicio;
+  globalThis.fetch = fetchDeVerdad;
+
+  t("un fallo de red se detecta como tal, no como 'sin canciones'", error?.tipo === "red");
+  t("al fallar la red en la primera fuente, no se sigue intentando el resto sin sentido",
+    llamadasDeRed === 1);
+  t("el fallo de red se resuelve rápido, sin quedarse colgado", duracion < 2000);
+}
+
+// ------------------------------------------------------------
 //  Pool comunitario: comprobación pura de la ponderación por canciones en común.
 // ------------------------------------------------------------
 console.log("Comprobando la ponderación del pool comunitario…");

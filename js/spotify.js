@@ -48,6 +48,32 @@ async function challenge(verifier) {
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+// Ninguna llamada a Spotify debería quedarse colgada para siempre: si la
+// conexión falla a medias (wifi inestable, red bloqueada…) el navegador puede
+// tardar muchísimo en darse por vencido él solo, y mientras tanto la pantalla
+// se queda en "Leyendo tus canciones…" sin decir nada. Con este límite, a los
+// 12s como mucho se corta y se avisa, en vez de dejar a alguien esperando
+// minutos sin saber si sigue funcionando o se ha quedado colgado.
+const TIEMPO_ESPERA_MS = 12000;
+
+async function fetchConLimite(url, opciones = {}) {
+  const controlador = new AbortController();
+  const limite = setTimeout(() => controlador.abort(), TIEMPO_ESPERA_MS);
+  try {
+    return await fetch(url, { ...opciones, signal: controlador.signal });
+  } catch (e) {
+    const err = new Error(
+      e?.name === "AbortError"
+        ? "Spotify ha tardado demasiado en responder (conexión lenta o caída)."
+        : "No se ha podido conectar con Spotify (revisa la conexión a internet de este dispositivo)."
+    );
+    err.red = true; // fallo de red/tiempo, no un error que venga de Spotify
+    throw err;
+  } finally {
+    clearTimeout(limite);
+  }
+}
+
 export async function iniciarLogin() {
   const verifier = aleatorio(64);
   sessionStorage.setItem("hitster_verifier", verifier);
@@ -76,7 +102,7 @@ export async function procesarVuelta() {
   history.replaceState({}, "", redirectUri());
   if (!verifier) return false;
 
-  const res = await fetch("https://accounts.spotify.com/api/token", {
+  const res = await fetchConLimite("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -136,7 +162,7 @@ export async function token() {
   if (!t) throw new Error("Sin sesión de Spotify");
   if (Date.now() < t.expira) return t.access_token;
 
-  const res = await fetch("https://accounts.spotify.com/api/token", {
+  const res = await fetchConLimite("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -152,7 +178,7 @@ export async function token() {
 
 // ---------- Llamadas a la Web API ----------
 async function api(ruta, opciones = {}) {
-  const res = await fetch("https://api.spotify.com/v1" + ruta, {
+  const res = await fetchConLimite("https://api.spotify.com/v1" + ruta, {
     ...opciones,
     headers: {
       Authorization: "Bearer " + (await token()),
@@ -162,7 +188,22 @@ async function api(ruta, opciones = {}) {
   });
   if (res.status === 204) return null;
   const texto = await res.text();
-  const cuerpo = texto ? JSON.parse(texto) : null;
+  let cuerpo = null;
+  if (texto) {
+    try {
+      cuerpo = JSON.parse(texto);
+    } catch {
+      // A veces la respuesta no es JSON de Spotify de verdad: algo se ha
+      // colado por el medio (un proxy, un filtro de red, un bloqueador de
+      // anuncios del navegador…) y ha devuelto texto plano o una página de
+      // error en su lugar. Antes esto se veía como un misterioso "Unexpected
+      // token" sin más pista; ahora guardamos el código real y un trozo del
+      // texto, para poder ver de un vistazo qué está devolviendo de verdad.
+      const e = new Error(`Spotify no devolvió datos válidos (código ${res.status}): "${texto.slice(0, 140)}"`);
+      e.status = res.status;
+      throw e;
+    }
+  }
   if (!res.ok) {
     const msg = cuerpo?.error?.message || res.statusText;
     const e = new Error(msg);
@@ -255,6 +296,7 @@ export async function pausar() {
 export async function misCancionesFavoritas() {
   const mapa = new Map(); // uri -> {titulo, artista, anio, uri, peso, popularidad}
   let huboErrorDePermisos = false;
+  let errorDeRed = null; // si la red/Spotify falla del todo, no tiene sentido seguir probando fuente a fuente
   const fuentes = []; // diagnóstico legible por si el resultado sale vacío
   const marcarSiEsPermiso = (e) => {
     if (e?.status === 401 || e?.status === 403) huboErrorDePermisos = true;
@@ -279,13 +321,21 @@ export async function misCancionesFavoritas() {
     mapa.set(t.uri, cancion);
   };
 
-  /** Ejecuta una fuente y anota, para el diagnóstico, cuántas canciones nuevas trajo (o qué falló). */
+  /**
+   * Ejecuta una fuente y anota, para el diagnóstico, cuántas canciones nuevas
+   * trajo (o qué falló). Si ya sabemos que la red/Spotify ha fallado del
+   * todo, no seguimos probando las fuentes que quedan: no tiene sentido
+   * (ni es rápido) esperar el límite de tiempo una y otra vez sabiendo de
+   * antemano que va a fallar igual.
+   */
   const probar = async (etiqueta, fn) => {
+    if (errorDeRed) { fuentes.push(`${etiqueta}: sin probar (fallo de red anterior)`); return; }
     const antes = mapa.size;
     try {
       await fn();
       fuentes.push(`${etiqueta}: ${mapa.size - antes}`);
     } catch (e) {
+      if (e?.red) { errorDeRed = e; fuentes.push(`${etiqueta}: ${e.message}`); return; }
       marcarSiEsPermiso(e);
       fuentes.push(`${etiqueta}: error ${e?.status ?? "?"} (${e?.message || "sin detalle"})`);
     }
@@ -322,18 +372,29 @@ export async function misCancionesFavoritas() {
       try {
         const r = await api(`/playlists/${p.id}/tracks?limit=50&fields=items(track(name,uri,artists(name),album(release_date),popularity))`);
         for (const it of r?.items || []) if (it.track) sumar(it.track, 1);
-      } catch (e) { marcarSiEsPermiso(e); /* alguna playlist puede fallar (colaborativa, borrada…) */ }
+      } catch (e) {
+        // Si es un fallo de red, no tiene sentido seguir probando playlist a
+        // playlist (podría haber hasta 15): lo dejamos subir para que
+        // `probar` lo detecte y pare ahí mismo.
+        if (e?.red) throw e;
+        marcarSiEsPermiso(e); // alguna playlist suelta puede fallar (colaborativa, borrada…)
+      }
     }
   });
 
   const resultado = [...mapa.values()];
   if (!resultado.length) {
-    const err = new Error(
-      huboErrorDePermisos
-        ? "Faltan permisos de Spotify (canciones guardadas, playlists, top o recientes)."
-        : "Spotify no ha devuelto ninguna canción aprovechable de ninguna fuente."
-    );
-    err.tipo = huboErrorDePermisos ? "permisos" : "vacio";
+    let err;
+    if (errorDeRed) {
+      err = new Error(errorDeRed.message);
+      err.tipo = "red";
+    } else if (huboErrorDePermisos) {
+      err = new Error("Faltan permisos de Spotify (canciones guardadas, playlists, top o recientes).");
+      err.tipo = "permisos";
+    } else {
+      err = new Error("Spotify no ha devuelto ninguna canción aprovechable de ninguna fuente.");
+      err.tipo = "vacio";
+    }
     err.detalle = fuentes.join(" · ");
     throw err;
   }
