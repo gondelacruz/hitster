@@ -9,8 +9,11 @@
 //    desarrollo solo admite 5 personas autorizadas — ver LEEME.md), puedes
 //    crear una SEGUNDA app en developer.spotify.com/dashboard, autorizar en
 //    ella a otro grupo de hasta 5 personas, y añadir su Client ID aquí como
-//    una entrada más. La app dejará elegir con cuál conectarse en cuanto
-//    haya más de una.
+//    una entrada más. No hace falta preguntarle a nadie con cuál conectarse:
+//    en cuanto haya más de una, la app prueba sola la primera y, si esa
+//    cuenta no está autorizada ahí, reintenta sola con la siguiente, sin
+//    que nadie tenga que elegir nada (solo verá la pantalla de Spotify pedir
+//    login otra vez).
 export const SPOTIFY_CLIENT_IDS = [
   { id: "6a7b96a2dbe14a2ea0648a9793b69d6d", nombre: "Grupo A" },
   { id: "aefd3c956c684cce86e5e8ef1a7851af", nombre: "Grupo B" },

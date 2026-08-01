@@ -289,54 +289,75 @@ console.log("Comprobando que se puede elegir con qué Client ID conectar (varias
 }
 
 // ------------------------------------------------------------
-//  Si hay más de una app configurada, la app debe preguntar con cuál
-//  conectarse en vez de ir directa a la primera (para que cada familia use
-//  la que le corresponda). Con una sola configurada (el caso normal), no
-//  debe aparecer ningún selector — se comprueba en el resto de pruebas de
-//  este archivo, que solo tienen una y nunca ven este paso de más.
+//  Si hay más de una app configurada, no debe preguntarse nada: se prueba la
+//  primera y, si esa cuenta no está autorizada ahí, se reintenta sola con la
+//  siguiente. Aquí probamos directamente las piezas de ese mecanismo
+//  (siguienteAppSinProbar/marcarIntentado vía iniciarLogin/limpiarIntentados
+//  y verificarAcceso), sin pasar por toda la interfaz.
 // ------------------------------------------------------------
-console.log("Comprobando el selector de 'con qué app conectarte' cuando hay más de una configurada…");
+console.log("Comprobando el reintento automático entre varias apps de Spotify (sin preguntar nada)…");
 {
   SPOTIFY_CLIENT_IDS.push({ id: "client-id-grupo-b", nombre: "Grupo B" });
-  const tokenGuardado = localStorage.getItem("hitster_spotify_token");
-  localStorage.removeItem("hitster_spotify_token"); // forzamos que haga falta (re)conectar
+  sessionStorage.removeItem("hitster_spotify_intentados");
 
-  const codigoMultiApp = "4040";
-  fb._escribir(`salas/${codigoMultiApp}`, {
-    fase: "lobby", hostCliente: "otro-host-multiapp", config: { mazo: "spotify" },
-    equipos: {
-      eq1: { id: "eq1", nombre: "Equipo Multi", color: COLORES_EQUIPO[0], orden: 0,
-             fichas: 3, cartas: [], miembros: {} },
-    },
-    usadas: {}, aportes: {}, ronda: null, ganador: null,
-  });
-  await clic('[data-accion="irUnirse"]', "Unirse para probar el selector multi-app");
-  document.getElementById("in-codigo").value = codigoMultiApp;
-  await clic('[data-accion="buscarSala"]', "Buscar sala multi-app");
-  await clic('[data-accion="unirmeEquipo"]', "Unirme a Equipo Multi");
+  t("sin haber probado ninguna app todavía, la siguiente sin probar es la primera configurada",
+    Sp.siguienteAppSinProbar() === SPOTIFY_CLIENT_IDS[0].id);
 
-  await clic('[data-accion="aportarSpotify"]', "Aportar (sin sesión, con 2 apps configuradas)");
-  t("con más de una app configurada, aparece el selector en vez de ir directo a Spotify",
-    document.querySelectorAll('[data-accion="elegirApp"]').length === 2);
-  t("el selector muestra el nombre de cada app configurada",
-    html().includes("Grupo A") && html().includes("Grupo B"));
-
-  const locationDeVerdad2 = globalThis.location;
+  const locationDeVerdad = globalThis.location;
   globalThis.location = { href: "", origin: "https://ejemplo.github.io", pathname: "/hitster/" };
-  await clic('[data-accion="elegirApp"][data-indice="1"]', "Elegir Grupo B en el selector");
-  const urlGenerada2 = globalThis.location.href;
-  globalThis.location = locationDeVerdad2;
-  t("al elegir 'Grupo B' en el selector, el login se hace con SU Client ID",
-    urlGenerada2.includes("client_id=client-id-grupo-b"));
+  await Sp.iniciarLogin(); // sin indicar cuál: debe coger la primera sin probar (Grupo A) y marcarla
+  globalThis.location = locationDeVerdad;
 
-  await clic('[data-accion="salir"]', "Salir de la sala multi-app");
-  fb._escribir(`salas/${codigoMultiApp}`, null);
-  await esperar(30);
-  t("al borrarse la sala multi-app, la app vuelve a la pantalla de inicio",
-    html().includes("Crear partida nueva"));
+  t("tras probar la primera app (sin indicarla), la siguiente sin probar es la segunda (Grupo B)",
+    Sp.siguienteAppSinProbar() === "client-id-grupo-b");
+
+  globalThis.location = { href: "", origin: "https://ejemplo.github.io", pathname: "/hitster/" };
+  await Sp.iniciarLogin(); // ahora debe coger automáticamente la segunda (Grupo B), sin que nadie elija
+  const urlGenerada = globalThis.location.href;
+  globalThis.location = locationDeVerdad;
+  t("tras agotar la primera, iniciarLogin() sin argumento usa sola la siguiente sin preguntar nada",
+    urlGenerada.includes("client_id=client-id-grupo-b"));
+
+  t("una vez probadas las dos apps configuradas, ya no queda ninguna más por probar",
+    Sp.siguienteAppSinProbar() === null);
+
+  Sp.limpiarIntentados();
+  t("al limpiar los intentos (login que sí funcionó), se vuelve a empezar por la primera",
+    Sp.siguienteAppSinProbar() === SPOTIFY_CLIENT_IDS[0].id);
 
   SPOTIFY_CLIENT_IDS.pop(); // restauramos: solo una app configurada, como espera el resto de pruebas
-  localStorage.setItem("hitster_spotify_token", tokenGuardado); // restauramos la sesión completa
+  sessionStorage.removeItem("hitster_spotify_intentados");
+}
+
+console.log("Comprobando verificarAcceso() (distingue 'cuenta no autorizada en esta app' de otros fallos)…");
+{
+  const fetchDeVerdad = globalThis.fetch;
+  const tokenGuardado = localStorage.getItem("hitster_spotify_token");
+  localStorage.setItem("hitster_spotify_token", JSON.stringify({
+    access_token: "tok", refresh_token: "ref", expira: Date.now() + 3600000,
+    alcance: Sp.SCOPES, clientId: SPOTIFY_CLIENT_IDS[0]?.id,
+  }));
+
+  globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => "Forbidden" });
+  t("verificarAcceso() devuelve false si /me responde 403 (cuenta no autorizada en esta app)",
+    (await Sp.verificarAcceso()) === false);
+
+  globalThis.fetch = async () => ({ ok: false, status: 401, text: async () => "Unauthorized" });
+  t("verificarAcceso() devuelve false también con 401",
+    (await Sp.verificarAcceso()) === false);
+
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ id: "yo" }) });
+  t("verificarAcceso() devuelve true si /me responde bien",
+    (await Sp.verificarAcceso()) === true);
+
+  let lanzo = false;
+  globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => "Error del servidor" });
+  try { await Sp.verificarAcceso(); } catch { lanzo = true; }
+  t("verificarAcceso() deja subir otros errores (no 401/403) tal cual, no los confunde con 'no autorizado'",
+    lanzo);
+
+  globalThis.fetch = fetchDeVerdad;
+  localStorage.setItem("hitster_spotify_token", tokenGuardado);
 }
 
 // ------------------------------------------------------------

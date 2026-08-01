@@ -4,11 +4,37 @@
 // ============================================================
 import { SPOTIFY_CLIENT_IDS } from "./config.js";
 
-// Reexportado para que app.js pueda pintar un selector de "con qué app te
-// conectas" cuando haya más de una configurada (ver config.js). Con una sola
-// app (lo normal), la app no muestra ningún selector: todo funciona igual
-// que siempre.
+// Reexportado por si hace falta desde fuera (diagnóstico, LEEME, etc.). Con
+// una sola app configurada (lo normal), todo esto es transparente: nadie
+// nota que existe.
 export { SPOTIFY_CLIENT_IDS };
+
+// ---------- varias apps de Spotify (por el límite de 5 usuarios) ----------
+// Con más de una app configurada, no hace falta preguntarle a nadie "¿a cuál
+// perteneces?": probamos la primera y, si Spotify deja completar el login
+// pero luego resulta que esa cuenta no está autorizada en ESA app en
+// concreto (ver `verificarAcceso`), reintentamos solos con la siguiente, sin
+// que la persona tenga que hacer nada más que aceptar el login de Spotify
+// otra vez. Aquí solo llevamos la cuenta de qué apps ya hemos probado en
+// este intento, para no darle a alguien vueltas en círculo.
+const INTENTADOS_KEY = "hitster_spotify_intentados";
+
+function idsIntentados() {
+  try { return JSON.parse(sessionStorage.getItem(INTENTADOS_KEY)) || []; } catch { return []; }
+}
+function marcarIntentado(id) {
+  const ya = idsIntentados();
+  if (id && !ya.includes(id)) sessionStorage.setItem(INTENTADOS_KEY, JSON.stringify([...ya, id]));
+}
+/** Client ID configurado que aún no hayamos probado en este intento, o null si ya probamos todos. */
+export function siguienteAppSinProbar() {
+  const ya = idsIntentados();
+  return SPOTIFY_CLIENT_IDS.find((a) => !ya.includes(a.id))?.id || null;
+}
+/** Se llama cuando una app SÍ ha funcionado, para que la próxima vez se vuelva a probar desde la primera. */
+export function limpiarIntentados() {
+  sessionStorage.removeItem(INTENTADOS_KEY);
+}
 
 export const SCOPES = [
   "user-read-private",
@@ -83,14 +109,13 @@ async function fetchConLimite(url, opciones = {}) {
 }
 
 /**
- * Empieza el login con Spotify. Si tenéis más de una app configurada (ver
- * `SPOTIFY_CLIENT_IDS` en config.js), hay que decir con cuál — quien llama a
- * esto (app.js) ya se habrá encargado de preguntarlo si hacía falta. Si no
- * se indica ninguno, se usa la primera de la lista (el caso normal, con una
- * sola app configurada).
+ * Empieza el login con Spotify. Si no se indica con qué Client ID (el caso
+ * normal), se usa el primero que aún no hayamos probado en este intento —
+ * con una sola app configurada, siempre es la única que hay.
  */
 export async function iniciarLogin(clientId) {
-  const id = clientId || SPOTIFY_CLIENT_IDS[0]?.id;
+  const id = clientId || siguienteAppSinProbar() || SPOTIFY_CLIENT_IDS[0]?.id;
+  marcarIntentado(id);
   const verifier = aleatorio(64);
   sessionStorage.setItem("hitster_verifier", verifier);
   // Nos acordamos de con qué app nos hemos ido, para poder canjear el código
@@ -250,6 +275,26 @@ async function api(ruta, opciones = {}) {
 }
 
 export const perfil = () => api("/me");
+
+/**
+ * Comprueba que la cuenta recién conectada tiene acceso de verdad a la app
+ * de Spotify con la que se autorizó. Hace falta porque, con varias apps
+ * configuradas, Spotify deja completar el login normalmente aunque la
+ * cuenta NO esté en la lista de esa app en concreto — el bloqueo solo
+ * aparece después, al llamar a la API de verdad (403). Usamos `/me`, la
+ * llamada más ligera posible, solo para detectarlo cuanto antes.
+ * Los fallos de red/tiempo se dejan subir tal cual: no significan "cuenta
+ * no autorizada", así que no deben disparar un reintento con otra app.
+ */
+export async function verificarAcceso() {
+  try {
+    await perfil();
+    return true;
+  } catch (e) {
+    if (e?.status === 401 || e?.status === 403) return false;
+    throw e;
+  }
+}
 
 const MALAS = /\b(karaoke|tribute|made famous by|in the style of|cover version|instrumental version)\b/i;
 

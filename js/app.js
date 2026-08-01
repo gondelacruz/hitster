@@ -91,6 +91,12 @@ async function init() {
   try {
     await Sp.procesarVuelta();
   } catch (e) { S.error = e.message; }
+  // Si acabamos de volver del login y hay más de una app de Spotify
+  // configurada, esto puede disparar solo un segundo intento con la
+  // siguiente app (sin preguntar nada), en cuyo caso `iniciarLogin` ya nos
+  // manda otra vez a Spotify y lo de abajo no llega a ejecutarse.
+  const seguimosAqui = await comprobarAccesoSpotify();
+  if (!seguimosAqui) return;
   S.spotifyOk = Sp.haySesion();
 
   // ¿Estábamos en una partida? Volvemos a entrar.
@@ -534,17 +540,38 @@ function uriRondaActual() {
 }
 
 /**
- * Empieza el login con Spotify. Si solo hay una app configurada (lo normal),
- * va directo, como siempre. Si hay más de una — porque sois muchos aportando
- * canciones y os hizo falta crear una segunda app para no toparos con el
- * límite de 5 usuarios de Spotify — primero pregunta con cuál conectarse.
+ * Empieza el login con Spotify. Si hay más de una app configurada — porque
+ * sois muchos aportando canciones y os hizo falta crear una segunda app para
+ * no toparos con el límite de 5 usuarios de Spotify — no hace falta preguntar
+ * nada: `Sp.iniciarLogin()` ya prueba sola la primera app sin probar todavía
+ * en este intento, y si luego resulta que la cuenta no está autorizada ahí,
+ * `comprobarAccesoSpotify` (ver más abajo, en `init`) reintenta sola con la
+ * siguiente en cuanto vuelve del login.
  */
-function elegirAppSpotify(volverA) {
+function irALoginSpotify(volverA) {
   sessionStorage.setItem("hitster_volver_a", volverA);
-  if (SPOTIFY_CLIENT_IDS.length <= 1) {
-    return Sp.iniciarLogin(SPOTIFY_CLIENT_IDS[0]?.id);
-  }
-  S.modal = "elegirApp";
+  return Sp.iniciarLogin();
+}
+
+/**
+ * Se llama justo después de procesar la vuelta del login de Spotify. Si hay
+ * más de una app configurada y la cuenta no está autorizada en la que
+ * acabamos de usar (Spotify deja completar el login igualmente, y el bloqueo
+ * solo aparece al llamar a la API — por eso hace falta esta comprobación),
+ * reintenta sola con la siguiente app sin preguntar nada a la persona; si ya
+ * no queda ninguna más por probar, avisa de que hace falta que quien organiza
+ * la partida añada esa cuenta en el panel de Spotify Developer.
+ */
+async function comprobarAccesoSpotify() {
+  if (!Sp.haySesion()) return true;
+  const acceso = await Sp.verificarAcceso();
+  if (acceso) { Sp.limpiarIntentados(); return true; }
+  const siguiente = Sp.siguienteAppSinProbar();
+  Sp.cerrarSesion();
+  if (siguiente) { await Sp.iniciarLogin(siguiente); return false; }
+  S.error = "No hemos podido acceder a Spotify con ninguna de las apps configuradas. Pide a quien organiza "
+    + "la partida que añada tu cuenta de Spotify en el panel de Spotify Developer.";
+  return true;
 }
 
 // ============================================================
@@ -558,15 +585,7 @@ const acciones = {
   verReglas: () => { S.modal = "reglas"; },
   cerrarModal: () => { S.modal = null; S.modalEquipo = null; },
 
-  conectarSpotify: () => elegirAppSpotify("crear"),
-
-  /** Se elige una app concreta desde el selector (solo aparece si hay más de una configurada). */
-  elegirApp(el) {
-    const app = SPOTIFY_CLIENT_IDS[Number(el.dataset.indice)];
-    S.modal = null;
-    if (!app) return;
-    return Sp.iniciarLogin(app.id);
-  },
+  conectarSpotify: () => irALoginSpotify("crear"),
 
   desconectarSpotify: () => { Sp.cerrarSesion(); S.spotifyOk = false; },
 
@@ -653,7 +672,7 @@ const acciones = {
     // (re)conectar para que Spotify pida esos permisos.
     if (!Sp.haySesion() || Sp.faltanPermisos()) {
       Sp.cerrarSesion();
-      return elegirAppSpotify("aportar");
+      return irALoginSpotify("aportar");
     }
     S.aportando = true; S.info = "Leyendo tus canciones de Spotify (esto puede tardar un poco)…"; render();
     try {
@@ -700,7 +719,7 @@ const acciones = {
    */
   cambiarCuentaSpotify() {
     Sp.cerrarSesion();
-    return elegirAppSpotify("aportar");
+    return irALoginSpotify("aportar");
   },
 
   /** Abre la lista de canciones de Spotify aportadas por el grupo (título — artista). */
@@ -1436,18 +1455,6 @@ function modal() {
       ${!puedeSaltar && !puedeCorregir && !puedeReintentar && !puedeVerPool
         ? '<p class="mini">Ahora mismo no hay nada que corregir. Vuelve a mirar aquí si suena una canción rota, no suena nada o el año no cuadra.</p>' : ""}
       <button class="grande sec" data-accion="cerrarModal">Cerrar</button>`;
-  }
-
-  if (S.modal === "elegirApp") {
-    cuerpo = `
-      <h2>¿Con qué grupo te dio de alta la familia?</h2>
-      <p class="mini">Sois muchos aportando canciones de Spotify, así que hay más de una app configurada
-        (Spotify solo deja 5 personas por app). Si no lo sabes, pregunta a quien organiza la partida.</p>
-      ${SPOTIFY_CLIENT_IDS.map((a, i) => `
-        <button class="grande sec" data-accion="elegirApp" data-indice="${i}" style="margin-bottom:10px">
-          ${esc(a.nombre)}
-        </button>`).join("")}
-      <button class="grande sec" data-accion="cerrarModal">Cancelar</button>`;
   }
 
   if (S.modal === "cancionesPool") {

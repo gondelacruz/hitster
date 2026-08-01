@@ -162,13 +162,14 @@ la gente entre ambas: 5 en una, 5 en la otra, etc.
    ];
    ```
 
-4. Pulsa **Commit changes**. En cuanto haya más de una entrada en la lista, la próxima vez que
-   alguien conecte Spotify (o pulse "Conectar otra cuenta de Spotify"), la app le preguntará con
-   cuál de los grupos hacerlo, antes de mandarle a la pantalla de Spotify. Dile a cada persona a
-   cuál pertenece (el que tú decidiste al añadirla en el paso 2).
+4. Pulsa **Commit changes**. No hace falta decirle a nadie a qué grupo pertenece ni que elija
+   nada: en cuanto haya más de una entrada en la lista, la app prueba sola la primera app
+   configurada y, si esa cuenta no está en su lista de autorizados, lo detecta sola y reintenta
+   automáticamente con la siguiente — la persona solo ve la pantalla de login de Spotify pedirle
+   que entre otra vez, sin ningún selector de por medio.
 
-Con una sola entrada en la lista (lo normal, hasta 5 personas), la app no pregunta nada — funciona
-exactamente igual que siempre.
+Con una sola entrada en la lista (lo normal, hasta 5 personas), la app no hace nada de esto —
+funciona exactamente igual que siempre.
 
 ---
 
