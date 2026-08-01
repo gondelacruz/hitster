@@ -19,7 +19,13 @@ export const SCOPES = [
 // Permisos que hacen falta específicamente para "Nuestras canciones". Si
 // alguien conectó su Spotify antes de que existieran (o alguno se ha
 // revocado), su sesión guardada no los tendrá y hay que reconectar.
-const SCOPES_APORTAR = ["user-library-read", "playlist-read-private", "user-read-recently-played"];
+// Incluimos "user-top-read" porque es la fuente que más pesa (top de largo y
+// medio plazo); sin él, a alguien con mucho historial pero sin "Me gusta"
+// guardados ni playlists propias le podría no salir nada, aunque sí escuche
+// mucha música.
+const SCOPES_APORTAR = [
+  "user-library-read", "playlist-read-private", "user-read-recently-played", "user-top-read",
+];
 
 const LS = "hitster_spotify_token";
 
@@ -230,11 +236,17 @@ export async function pausar() {
  * escuchas puntuales recientes con los favoritos de verdad (para eso ya está
  * lo de "reproducidas recientemente", que es más literal).
  *
- * Si el resultado sale vacío porque a la sesión le faltan permisos (cuenta
- * conectada antes de pedir estos permisos, o alguno revocado a mano), lo
- * decimos con un error distinguible (`e.tipo === "permisos"`) en vez de
- * devolver una lista vacía sin más: así la app puede pedir reconectar en
- * lugar de decir "no tienes historial" cuando el problema es otro.
+ * Si el resultado sale vacío, SIEMPRE lanzamos un error explicando por qué (en
+ * vez de devolver una lista vacía sin más), distinguiendo dos casos:
+ *   - `e.tipo === "permisos"`: alguna fuente falló con 401/403 (cuenta
+ *     conectada antes de pedir estos permisos, o alguno revocado a mano).
+ *   - `e.tipo === "vacio"`: todas las fuentes respondieron sin error, pero
+ *     ninguna trajo canciones aprovechables (por ejemplo, un fallo pasajero
+ *     de la API que no es un 401/403 pero tampoco da datos, o una cuenta que
+ *     de verdad no tiene top/recientes/guardadas/playlists propias). Para no
+ *     tener que adivinar, `e.detalle` trae un resumen de qué pasó en cada
+ *     fuente (cuántas canciones trajo o qué error dio), para poder ver de un
+ *     vistazo cuál es la fuente problemática.
  *
  * También guardamos la `popularidad` que da Spotify a cada canción (0-100),
  * para que luego, al elegir cuál suena, se pueda dar preferencia a las que
@@ -243,6 +255,7 @@ export async function pausar() {
 export async function misCancionesFavoritas() {
   const mapa = new Map(); // uri -> {titulo, artista, anio, uri, peso, popularidad}
   let huboErrorDePermisos = false;
+  const fuentes = []; // diagnóstico legible por si el resultado sale vacío
   const marcarSiEsPermiso = (e) => {
     if (e?.status === 401 || e?.status === 403) huboErrorDePermisos = true;
   };
@@ -266,28 +279,42 @@ export async function misCancionesFavoritas() {
     mapa.set(t.uri, cancion);
   };
 
-  for (const [rango, peso] of [["long_term", 3], ["medium_term", 2]]) {
-    for (const offset of [0, 49]) {
-      try {
+  /** Ejecuta una fuente y anota, para el diagnóstico, cuántas canciones nuevas trajo (o qué falló). */
+  const probar = async (etiqueta, fn) => {
+    const antes = mapa.size;
+    try {
+      await fn();
+      fuentes.push(`${etiqueta}: ${mapa.size - antes}`);
+    } catch (e) {
+      marcarSiEsPermiso(e);
+      fuentes.push(`${etiqueta}: error ${e?.status ?? "?"} (${e?.message || "sin detalle"})`);
+    }
+  };
+
+  for (const [rango, peso, etiqueta] of [
+    ["long_term", 3, "top largo plazo"], ["medium_term", 2, "top medio plazo"],
+  ]) {
+    await probar(etiqueta, async () => {
+      for (const offset of [0, 50]) {
         const r = await api(`/me/top/tracks?limit=50&offset=${offset}&time_range=${rango}`);
         for (const t of r?.items || []) sumar(t, peso);
-      } catch (e) { marcarSiEsPermiso(e); /* puede no tener suficiente historial en ese rango */ }
-    }
+      }
+    });
   }
 
-  try {
+  await probar("reproducidas recientemente", async () => {
     const r = await api(`/me/player/recently-played?limit=50`);
     for (const it of r?.items || []) if (it.track) sumar(it.track, 2);
-  } catch (e) { marcarSiEsPermiso(e); /* requiere el permiso user-read-recently-played */ }
+  });
 
-  try {
+  await probar("guardadas", async () => {
     for (const offset of [0, 50]) {
       const r = await api(`/me/tracks?limit=50&offset=${offset}`);
       for (const it of r?.items || []) if (it.track) sumar(it.track, 2);
     }
-  } catch (e) { marcarSiEsPermiso(e); /* requiere el permiso user-library-read */ }
+  });
 
-  try {
+  await probar("playlists propias", async () => {
     const perfilActual = await perfil();
     const listas = await api(`/me/playlists?limit=50`);
     const propias = (listas?.items || []).filter((p) => p.owner?.id === perfilActual.id).slice(0, 15);
@@ -297,12 +324,17 @@ export async function misCancionesFavoritas() {
         for (const it of r?.items || []) if (it.track) sumar(it.track, 1);
       } catch (e) { marcarSiEsPermiso(e); /* alguna playlist puede fallar (colaborativa, borrada…) */ }
     }
-  } catch (e) { marcarSiEsPermiso(e); /* requiere el permiso playlist-read-private */ }
+  });
 
   const resultado = [...mapa.values()];
-  if (!resultado.length && huboErrorDePermisos) {
-    const err = new Error("Faltan permisos de Spotify (canciones guardadas, playlists o recientes).");
-    err.tipo = "permisos";
+  if (!resultado.length) {
+    const err = new Error(
+      huboErrorDePermisos
+        ? "Faltan permisos de Spotify (canciones guardadas, playlists, top o recientes)."
+        : "Spotify no ha devuelto ninguna canción aprovechable de ninguna fuente."
+    );
+    err.tipo = huboErrorDePermisos ? "permisos" : "vacio";
+    err.detalle = fuentes.join(" · ");
     throw err;
   }
   return resultado;

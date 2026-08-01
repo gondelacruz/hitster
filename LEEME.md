@@ -304,7 +304,7 @@ inglés»). Añade las que quieras al final de la lista, antes del `];`.
 | Los demás equipos no ven la partida | Revisa que `databaseURL` esté en `config.js` y que publicaste las reglas de Firebase. |
 | Se cerró la pestaña del anfitrión | Volved a entrar en la web: la partida se recupera sola. Si el anfitrión sale con el botón **Salir**, la partida se borra. |
 | Un familiar no puede colocar la carta ni robar | Es normal si no fue quien creó ese equipo: solo el líder del equipo juega los turnos. El resto puede aportar canciones de Spotify y mirar. |
-| «No he encontrado canciones tuyas en Spotify» aunque sí tenga historial | Si ya tenía la sesión conectada de antes, probablemente le faltan permisos nuevos (biblioteca, playlists, reproducciones recientes). Vuelve a pulsar el botón: la app detecta esto sola y le lleva otra vez a la pantalla de Spotify para darlos. |
+| «No he encontrado canciones tuyas en Spotify» aunque sí tenga historial | Si ya tenía la sesión conectada de antes, probablemente le faltan permisos nuevos (biblioteca, playlists, top, reproducciones recientes). La app detecta esto sola en la mayoría de los casos y le lleva otra vez a la pantalla de Spotify para darlos. Si aun así vuelve a salir el aviso, ahora incluye un detalle por fuente (top, recientes, guardadas, playlists) para saber cuál es la que falla — si alguna dice "error 429", es un límite temporal de peticiones de Spotify: basta con esperar un minuto y reintentarlo. |
 
 ---
 

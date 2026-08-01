@@ -633,7 +633,6 @@ const acciones = {
       const canciones = await Sp.misCancionesFavoritas();
       const nombre = miEquipo()?.nombre || "Alguien";
       await Net.escribir(S.codigo, `aportes/${S.clienteId}`, { nombre, canciones });
-      if (!canciones.length) S.error = "No he encontrado canciones tuyas en Spotify (¿tienes suficiente historial?).";
     } catch (e) {
       if (e.tipo === "permisos") {
         // Le faltaban permisos y no lo detectamos antes (p.ej. los revocó a
@@ -642,6 +641,15 @@ const acciones = {
         Sp.cerrarSesion();
         S.error = "A tu Spotify le faltan permisos para leer canciones guardadas, playlists o "
           + "reproducciones recientes. Vuelve a pulsar el botón para reconectar y darlos.";
+      } else if (e.tipo === "vacio") {
+        // Todas las fuentes respondieron sin error de permisos, pero ninguna
+        // trajo canciones aprovechables. En vez de un "¿tienes historial?"
+        // genérico, enseñamos el detalle por fuente (útil para diagnosticar:
+        // por ejemplo, si dice "error 429" en vez de "0", es un límite de
+        // peticiones de Spotify y basta con reintentarlo en un momento).
+        S.error = "No he encontrado canciones tuyas en Spotify que se puedan usar. "
+          + "Detalle por fuente: " + (e.detalle || "sin detalle") + ". Si tienes mucho historial y esto no "
+          + "cuadra, prueba a esperar un minuto y reintentarlo (puede ser un límite temporal de Spotify).";
       } else {
         S.error = "Spotify: " + e.message;
       }

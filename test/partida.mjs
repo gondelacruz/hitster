@@ -229,8 +229,46 @@ localStorage.setItem("hitster_spotify_token", JSON.stringify({
 }));
 t("una sesión sin campo de permisos guardado también fuerza reconectar", Sp.faltanPermisos() === true);
 
+localStorage.setItem("hitster_spotify_token", JSON.stringify({
+  ...tokenCompleto,
+  alcance: "user-library-read playlist-read-private user-read-recently-played", // falta user-top-read
+}));
+t("una sesión sin 'user-top-read' también fuerza reconectar (es la fuente que más pesa)",
+  Sp.faltanPermisos() === true);
+
 localStorage.setItem("hitster_spotify_token", JSON.stringify(tokenCompleto)); // restauramos para el resto de pruebas
 t("con todos los permisos concedidos, no hace falta reconectar", Sp.faltanPermisos() === false);
+
+// ------------------------------------------------------------
+//  Si TODAS las fuentes de Spotify responden sin error de permisos pero
+//  ninguna trae canciones aprovechables, la app ya no dice sin más "no tienes
+//  historial": lanza un error con detalle de qué pasó en cada fuente, para
+//  poder diagnosticar en vez de adivinar (p. ej. distinguir "0 de verdad" de
+//  un límite de peticiones de Spotify).
+// ------------------------------------------------------------
+console.log("Comprobando el diagnóstico cuando Spotify no devuelve canciones aprovechables…");
+{
+  const fetchDeVerdad = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const json = (obj) => ({ ok: true, status: 200, text: async () => JSON.stringify(obj), json: async () => obj });
+    if (u.includes("/v1/me/top/tracks")) return json({ items: [] });
+    if (u.includes("/v1/me/player/recently-played")) return json({ items: [] });
+    if (u.includes("/v1/me/tracks")) return json({ items: [] });
+    if (u.includes("/v1/me/playlists")) return json({ items: [] });
+    if (u.includes("/v1/me")) return json({ id: "mi-id-de-prueba" });
+    return json({});
+  };
+  let error = null;
+  try { await Sp.misCancionesFavoritas(); } catch (e) { error = e; }
+  globalThis.fetch = fetchDeVerdad;
+
+  t("si ninguna fuente trae canciones (pero tampoco da error de permisos), se lanza un error",
+    error?.tipo === "vacio");
+  t("el error de 'vacío' trae un detalle legible con las 5 fuentes probadas",
+    ["top largo plazo", "top medio plazo", "reproducidas recientemente", "guardadas", "playlists propias"]
+      .every((etiqueta) => (error?.detalle || "").includes(etiqueta)));
+}
 
 // ------------------------------------------------------------
 //  Pool comunitario: comprobación pura de la ponderación por canciones en común.
