@@ -241,6 +241,26 @@ localStorage.setItem("hitster_spotify_token", JSON.stringify(tokenCompleto)); //
 t("con todos los permisos concedidos, no hace falta reconectar", Sp.faltanPermisos() === false);
 
 // ------------------------------------------------------------
+//  Si alguien ya había aceptado esta app en Spotify alguna vez, por defecto
+//  Spotify le manda de vuelta al instante sin enseñarle la pantalla de
+//  permisos — así que si le faltaba un permiso nuevo, nunca tendría manera
+//  de concedérselo (el "reconectar" no serviría de nada). Por eso el login
+//  siempre debe forzar que se vea esa pantalla.
+// ------------------------------------------------------------
+console.log("Comprobando que el login a Spotify siempre fuerza ver la pantalla de permisos…");
+{
+  const locationDeVerdad = globalThis.location;
+  globalThis.location = { href: "", origin: "https://ejemplo.github.io", pathname: "/hitster/" };
+  await Sp.iniciarLogin();
+  const urlGenerada = globalThis.location.href;
+  globalThis.location = locationDeVerdad;
+
+  t("el login a Spotify pide 'show_dialog=true' (si no, quien ya había aceptado antes no vería "
+    + "la pantalla de permisos y no podría conceder uno nuevo)",
+    urlGenerada.includes("show_dialog=true"));
+}
+
+// ------------------------------------------------------------
 //  Si falla justo el "top" de Spotify (sin permiso, o cualquier otro motivo),
 //  no debe impedir aportar: se usan igual las demás fuentes (recientes,
 //  guardadas, playlists), sin lanzar ningún error.

@@ -86,6 +86,12 @@ export async function iniciarLogin() {
     scope: SCOPES,
     code_challenge_method: "S256",
     code_challenge: await challenge(verifier),
+    // Sin esto, si la persona ya había aceptado esta app alguna vez, Spotify
+    // la manda de vuelta al instante sin enseñarle la pantalla de permisos
+    // — y sin pantalla, no hay forma de conceder un permiso nuevo que no
+    // tuviera ya aceptado de antes. Como aquí SIEMPRE queremos que vea (y
+    // pueda aceptar) la lista de permisos actual, se lo forzamos.
+    show_dialog: "true",
   });
   location.href = "https://accounts.spotify.com/authorize?" + params;
 }
