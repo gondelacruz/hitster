@@ -687,6 +687,73 @@ t("las demás canciones del pool no se ven afectadas por el bloqueo",
   poolConBloqueo.some((c) => c.titulo === "Solo de p1") && poolConBloqueo.some((c) => c.titulo === "Solo de p2"));
 
 // ------------------------------------------------------------
+//  Reparto justo por PERSONA en el pool de Spotify (no por canción suelta):
+//  quien tenga guardadas 100 canciones de un solo artista no debe acaparar
+//  el mazo solo por tener muchas más que los demás (el caso real reportado:
+//  a alguien le salió casi todo de Roger Waters, que solo escuchaba él).
+// ------------------------------------------------------------
+console.log("Comprobando el reparto justo por persona en el pool de Spotify…");
+let vecesDePocasPorPersona = 0;
+const INTENTOS_PERSONA = 4000;
+for (let i = 0; i < INTENTOS_PERSONA; i++) {
+  if (App.elegirDeSpotifyPorPersona(poolDesigual).titulo.startsWith("CanciónPoca")) vecesDePocasPorPersona++;
+}
+t("elegirDeSpotifyPorPersona reparte ~50/50 entre personas, tenga cada una las canciones que tenga",
+  vecesDePocasPorPersona / INTENTOS_PERSONA > 0.4 && vecesDePocasPorPersona / INTENTOS_PERSONA < 0.6);
+t("elegirDeSpotifyPorPersona no revienta si a alguna canción le falta 'aportantes'",
+  !!App.elegirDeSpotifyPorPersona([{ titulo: "Suelta", artista: "A", anio: 2000, uri: "s1" }]));
+
+// ------------------------------------------------------------
+//  Mazo "mixto": reparto ~50/50 entre español e inglés, autocorrectivo pero
+//  sin alternancia estricta (para que no se note un patrón previsible).
+// ------------------------------------------------------------
+console.log("Comprobando el reparto de idiomas del mazo 'mixto'…");
+const catalogoIdiomas = [
+  ...Array.from({ length: 10 }, (_, i) => ({ titulo: `Es${i}`, artista: "A", anio: 2000, mazo: "es" })),
+  ...Array.from({ length: 10 }, (_, i) => ({ titulo: `En${i}`, artista: "A", anio: 2000, mazo: "int" })),
+];
+// Si ya llevamos usadas 8 canciones en inglés y 0 en español, lo siguiente
+// debe favorecer muchísimo al español, pero sin ser un 100% forzoso.
+const usadasSesgadas = {};
+for (let i = 0; i < 8; i++) usadasSesgadas[App.clave({ titulo: `En${i}`, artista: "A" })] = true;
+const disponiblesSesgadas = catalogoIdiomas.filter((c) => !usadasSesgadas[App.clave(c)]);
+let vecesEsCorrigiendo = 0;
+const INTENTOS_IDIOMA = 3000;
+for (let i = 0; i < INTENTOS_IDIOMA; i++) {
+  if (App.elegirBalanceadoPorIdioma(catalogoIdiomas, usadasSesgadas, disponiblesSesgadas).mazo === "es") vecesEsCorrigiendo++;
+}
+t("si vamos sobrados de inglés, el mazo 'mixto' se autocorrige hacia el español",
+  vecesEsCorrigiendo / INTENTOS_IDIOMA > 0.6);
+t("pero no de forma absoluta: sigue pudiendo salir inglés (no es alternancia estricta)",
+  vecesEsCorrigiendo / INTENTOS_IDIOMA < 1);
+
+let vecesEsSinHistorial = 0;
+for (let i = 0; i < INTENTOS_IDIOMA; i++) {
+  if (App.elegirBalanceadoPorIdioma(catalogoIdiomas, {}, catalogoIdiomas).mazo === "es") vecesEsSinHistorial++;
+}
+t("sin historial todavía, el mazo 'mixto' arranca ~50/50",
+  vecesEsSinHistorial / INTENTOS_IDIOMA > 0.4 && vecesEsSinHistorial / INTENTOS_IDIOMA < 0.6);
+
+const soloIngles = catalogoIdiomas.filter((c) => c.mazo !== "es");
+t("si el español se agota, el mazo 'mixto' sigue dando canciones en inglés",
+  App.elegirBalanceadoPorIdioma(catalogoIdiomas, {}, soloIngles)?.mazo === "int");
+
+// Integración: con mazo 'mixto' (y sin nadie aportando por Spotify, para
+// aislar solo la parte curada), sacarCancion debe acabar repartiendo ~50/50
+// entre idiomas a lo largo de muchas rondas de una partida simulada.
+let vistasEs = 0, vistasEnMixto = 0;
+let usadasMixto = {};
+for (let i = 0; i < 200; i++) {
+  const c = App.sacarCancion({ config: { mazo: "mixto" }, usadas: usadasMixto, aportes: {} });
+  if (!c) break;
+  usadasMixto = { ...usadasMixto, [App.clave(c)]: true };
+  if (c.mazo === "es") vistasEs++; else if (c.mazo === "int") vistasEnMixto++;
+}
+const totalVistasMixto = vistasEs + vistasEnMixto;
+t("con mazo 'mixto' y sin Spotify aportado, sacarCancion reparte ~50/50 entre idiomas en toda la partida",
+  totalVistasMixto > 100 && Math.abs(vistasEs / totalVistasMixto - 0.5) < 0.15);
+
+// ------------------------------------------------------------
 //  Corregir el año debe también rectificar quién se queda la carta.
 // ------------------------------------------------------------
 console.log("Comprobando que corregir el año rectifica al ganador…");
@@ -1198,12 +1265,13 @@ while (est().fase === "jugando" && vueltas++ < 2500) {
       t("la canción corregida no queda duplicada en más de un equipo", dueños.length <= 1);
     }
 
-    // Una vez, durante la partida, abrimos el panel de "Otros equipos".
+    // Una vez, durante la partida, abrimos el panel de "Ver equipos" (ahora
+    // incluye también el propio equipo, no solo los rivales).
     if (revelados === 2) {
-      await clic('[data-accion="verOtros"]', "Otros equipos");
-      t("el panel de otros equipos se abre", html().includes("Otros equipos"));
-      t("el panel deja elegir entre los otros dos equipos",
-        html().includes("Los Primos") && html().includes("Los Peques"));
+      await clic('[data-accion="verOtros"]', "Ver equipos");
+      t("el panel de equipos se abre", html().includes("<h2>Equipos</h2>"));
+      t("el panel deja elegir entre los tres equipos, incluido el propio",
+        html().includes("Los Primos") && html().includes("Los Peques") && html().includes("Los Abuelos"));
       await clic('[data-accion="verEquipo"]', "Ver equipo");
       await clic('[data-accion="cerrarModal"]', "Cerrar panel");
     }

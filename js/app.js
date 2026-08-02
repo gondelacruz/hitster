@@ -7,7 +7,7 @@ import * as R from "./reglas.js";
 import * as Net from "./net.js";
 import * as Sp from "./spotify.js";
 import {
-  esc, htmlCarta, htmlDorso, htmlFichas, htmlLinea, htmlEquipoFila, reloj, aviso,
+  esc, htmlCarta, htmlDorso, htmlFichas, htmlLinea, htmlEquipoFila, aviso,
 } from "./ui.js";
 
 const app = document.getElementById("app");
@@ -175,16 +175,14 @@ function entrarEnSala() {
   Net.marcarPresencia(S.codigo, S.equipoId, S.clienteId);
 }
 
-/** Latido: refresca el cronómetro y deja que el anfitrión avance por tiempo. */
+/**
+ * Latido: deja que el anfitrión avance la partida por tiempo. Ya no hay
+ * cronómetro visible en pantalla (lo importante es la línea del tiempo, no
+ * meter prisa) — pero el tope de tiempo se sigue cumpliendo igual por
+ * detrás, así una ronda nunca se queda colgada si nadie pulsa nada.
+ */
 function tic() {
   if (!E) return;
-  const nodo = document.getElementById("crono");
-  if (nodo) {
-    const limite = nodo.dataset.limite ? Number(nodo.dataset.limite) : 0;
-    const seg = (limite - Net.ahora()) / 1000;
-    nodo.textContent = reloj(seg);
-    nodo.classList.toggle("urgente", seg <= 15);
-  }
   if (soyHost()) motor();
 }
 
@@ -232,10 +230,9 @@ export function poolComunitario(estado) {
 
 /**
  * Cuántas canciones del pool comunitario ya usadas en la partida vino de
- * cada persona (por `clienteId`). Sirve para, al elegir la siguiente,
- * favorecer a quien todavía no ha sonado nada, en vez de dejar que sea puro
- * azar y algún aportante se quede sin oír ninguna canción suya en toda la
- * partida.
+ * cada persona (por `clienteId`). Ya no se usa para elegir (ver
+ * `elegirDeSpotifyPorPersona`), pero se deja aquí, con su prueba, por si
+ * hiciera falta en el futuro.
  */
 export function usosPorAportante(pool, usadas) {
   const usos = new Map();
@@ -244,6 +241,34 @@ export function usosPorAportante(pool, usadas) {
     for (const id of c.aportantes) usos.set(id, (usos.get(id) || 0) + 1);
   }
   return usos;
+}
+
+/**
+ * Elige una canción del pool de Spotify siendo justos entre aportantes: en
+ * vez de sortear directamente entre TODAS las canciones (lo que deja que
+ * quien tenga cargadas 40 canciones de un solo artista acapare el mazo solo
+ * por tener muchas más guardadas que los demás — el caso real fue alguien
+ * con medio Spotify de Roger Waters), primero se sortea, con las mismas
+ * probabilidades, a qué PERSONA le toca sonar, y solo después se elige al
+ * azar una canción suya. Así cada aportante tiene la misma probabilidad de
+ * que le toque, cante lo que cante y tenga las que tenga. Una canción que
+ * varias personas compartan cuenta en el "cajón" de cada una de ellas, así
+ * que sigue teniendo, de forma natural, algo más de probabilidad — pero sin
+ * ningún multiplicador aparte.
+ */
+export function elegirDeSpotifyPorPersona(lista) {
+  const porPersona = new Map(); // clienteId -> canciones libres suyas
+  for (const c of lista) {
+    const aportantes = c.aportantes && c.aportantes.size ? [...c.aportantes] : ["__sin_aportante__"];
+    for (const id of aportantes) {
+      if (!porPersona.has(id)) porPersona.set(id, []);
+      porPersona.get(id).push(c);
+    }
+  }
+  const personas = [...porPersona.keys()];
+  const persona = personas[Math.floor(Math.random() * personas.length)];
+  const suyas = porPersona.get(persona);
+  return suyas[Math.floor(Math.random() * suyas.length)];
 }
 
 /** Resumen para mostrar en el lobby: cuánta gente ha aportado y cuántas coinciden. */
@@ -256,12 +281,17 @@ export function resumenAportes(estado) {
 const TODAS_CURADAS = () => CANCIONES.map(([titulo, artista, anio, m]) => ({ titulo, artista, anio, mazo: m }));
 
 /**
- * Cinco mazos posibles:
+ * Seis mazos posibles:
  *  - "famosas": el mazo curado entero (español + inglés + algún otro idioma).
  *  - "es": solo español y latino.
  *  - "en": solo canciones en inglés (aprox.: el mazo internacional).
  *  - "spotify": solo lo que aporten los jugadores con su Spotify.
  *  - "todo": lo que aporten los jugadores + el mazo curado entero, mezclado.
+ *  - "mixto": lo mismo que "todo", pero la parte curada se reparte a
+ *    propósito ~50/50 entre español e inglés en vez de salir como caiga (el
+ *    catálogo curado tiene casi el doble de canciones en inglés que en
+ *    español, así que sin esto tiende a notarse) — ver
+ *    `elegirBalanceadoPorIdioma`.
  */
 export function baraja(config, estado) {
   const todas = TODAS_CURADAS();
@@ -270,6 +300,7 @@ export function baraja(config, estado) {
     case "en": return { propias: [], curadas: todas.filter((c) => c.mazo === "int") };
     case "spotify": return { propias: poolComunitario(estado), curadas: [] };
     case "todo": return { propias: poolComunitario(estado), curadas: todas };
+    case "mixto": return { propias: poolComunitario(estado), curadas: todas };
     default: return { propias: [], curadas: todas }; // "famosas"
   }
 }
@@ -345,6 +376,40 @@ export function elegirPonderadoPorDecada(lista, usos = null) {
   return elegirPonderado(porDecada.get(elegida), usos);
 }
 
+/**
+ * Para el mazo "mixto": reparte lo curado ~50/50 entre español e inglés,
+ * pero sin alternancia estricta (que con dos equipos se nota muchísimo:
+ * ES-EN-ES-EN según a quién le toque jugar, muy cantado). En vez de eso, en
+ * cada tirada se mira cuánto llevamos de cada idioma en lo ya usado en la
+ * partida y se sube la probabilidad del que va más flojo — corrigiendo el
+ * desequilibrio poco a poco, dejando siempre un margen real de azar, para
+ * que sea variado de verdad y no un metrónomo previsible.
+ *
+ * `catalogoCompleto` es el mazo curado entero (para poder mirar el idioma de
+ * lo ya usado, aunque ya no esté disponible); `disponibles` son las que
+ * todavía se pueden sacar.
+ */
+export function elegirBalanceadoPorIdioma(catalogoCompleto, usadas, disponibles) {
+  const esDisp = disponibles.filter((c) => c.mazo === "es");
+  const enDisp = disponibles.filter((c) => c.mazo !== "es");
+  if (!esDisp.length) return enDisp[Math.floor(Math.random() * enDisp.length)];
+  if (!enDisp.length) return esDisp[Math.floor(Math.random() * esDisp.length)];
+
+  let usadasEs = 0, usadasEn = 0;
+  for (const c of catalogoCompleto) {
+    if (!usadas[clave(c)]) continue;
+    if (c.mazo === "es") usadasEs++; else usadasEn++;
+  }
+  const total = usadasEs + usadasEn;
+  let probEs = 0.5;
+  if (total > 0) {
+    const fraccionEs = usadasEs / total;
+    probEs = Math.min(0.85, Math.max(0.15, 0.5 + (0.5 - fraccionEs) * 0.9));
+  }
+  const lista = Math.random() < probEs ? esDisp : enDisp;
+  return lista[Math.floor(Math.random() * lista.length)];
+}
+
 export function sacarCancion(estado) {
   const { propias, curadas } = baraja(estado.config, estado);
   const usadas = estado.usadas || {};
@@ -354,14 +419,14 @@ export function sacarCancion(estado) {
   if (a.length && (!b.length || Math.random() < 0.6)) fuente = a;
   if (!fuente.length) fuente = a.length ? a : b;
   if (!fuente.length) return null;
-  // El pool de Spotify se elige ahora totalmente al azar (misma lógica que
-  // el mazo curado), sin ponderar por popularidad, década ni reparto de
-  // turnos entre aportantes: con grupos pequeños, cualquier sesgo —por
-  // pequeño que fuera— concentraba las tiradas en las mismas canciones
-  // "seguras" y hacía que se repitieran una y otra vez de partida en
-  // partida. `elegirPonderadoPorDecada`/`elegirPonderado`/`usosPorAportante`
-  // se dejan definidas (con sus propias pruebas) por si algún día se quiere
-  // recuperar ese criterio, pero ya no se usan aquí.
+  // El pool de Spotify siempre se elige repartiendo primero entre personas
+  // (ver `elegirDeSpotifyPorPersona`), para que nadie acapare el mazo solo
+  // por tener muchas más canciones guardadas que el resto.
+  if (fuente === a) return elegirDeSpotifyPorPersona(fuente);
+  // El mazo curado, en el mazo "mixto", se reparte ~50/50 entre idiomas.
+  // En el resto de mazos (famosas/es/en/todo) sigue siendo del todo
+  // uniforme, como hasta ahora.
+  if (estado.config?.mazo === "mixto") return elegirBalanceadoPorIdioma(curadas, usadas, fuente);
   return fuente[Math.floor(Math.random() * fuente.length)];
 }
 
@@ -990,11 +1055,15 @@ const acciones = {
     S.modal = null;
   },
 
-  // ----- ver otros equipos -----
+  // ----- ver equipos (el tuyo incluido, útil mientras juega otro) -----
   verOtros() {
-    const otros = R.equiposEnOrden(E.equipos).filter((e) => e.id !== S.equipoId);
+    const todos = R.equiposEnOrden(E.equipos);
     S.modal = "otros";
-    S.modalEquipo = otros.length === 1 ? otros[0].id : null;
+    // Por defecto se muestra el equipo al que le toca jugar (lo más útil
+    // mientras esperas), pero se puede cambiar a cualquier otro, incluido
+    // el tuyo propio, con las pestañas de arriba del modal.
+    const activo = equipoActivo();
+    S.modalEquipo = activo ? activo.id : (todos[0]?.id ?? null);
   },
   verEquipo(el) { S.modalEquipo = el.dataset.id; },
 
@@ -1080,11 +1149,14 @@ function vistaCrear() {
         <option value="en">Solo en inglés</option>
         <option value="spotify">Canciones de Spotify de los jugadores</option>
         <option value="todo">Todo — Spotify de los jugadores + famosas</option>
+        <option value="mixto">Mix variado — Spotify + famosas, mitad inglés mitad español</option>
       </select>
-      <p class="mini" style="margin-top:10px">En «Spotify de los jugadores» y en «Todo», cualquiera que se una
-        puede conectar su Spotify y aportar sus canciones favoritas (lo verás en la sala de espera). Se
-        priorizan las que varias personas tengáis en común, mezclando también épocas distintas. Algunos años
-        pueden fallar por remasterizaciones: si veis uno mal, podréis corregirlo en el momento.</p>
+      <p class="mini" style="margin-top:10px">En «Spotify de los jugadores», «Todo» y «Mix variado», cualquiera
+        que se una puede conectar su Spotify y aportar sus canciones favoritas (lo verás en la sala de espera).
+        Cada persona que aporta tiene las mismas probabilidades de que le toque una canción suya, tenga muchas o
+        pocas guardadas. En «Mix variado» además se reparte lo curado a partes iguales entre español e inglés,
+        sin que se note un patrón fijo. Algunos años pueden fallar por remasterizaciones: si veis uno mal,
+        podréis corregirlo en el momento.</p>
       <div style="height:16px"></div>
       <button class="grande" data-accion="crearPartida" ${S.spotifyOk ? "" : "disabled"}>Crear partida</button>
       <div style="height:10px"></div>
@@ -1172,7 +1244,7 @@ function vistaLobby() {
           Vosotros podéis aportar canciones de Spotify y animar 🙂</p>` : ""}
     </div>
 
-    ${["spotify", "todo"].includes(E.config?.mazo) ? `
+    ${["spotify", "todo", "mixto"].includes(E.config?.mazo) ? `
       <div class="tarjeta">
         <h3>Nuestras canciones</h3>
         <p class="mini">${gente
@@ -1219,13 +1291,21 @@ function vistaLobby() {
  * esquina (ver `tic()`, que sigue buscando el mismo id="crono" para
  * refrescarlo cada segundo, esté donde esté).
  */
-function barraSuperior(limiteCrono) {
+/** Marcador compacto: cuántas cartas lleva cada equipo, visible durante toda la ronda. */
+function marcador() {
+  const equipos = R.equiposEnOrden(E?.equipos || {});
+  if (equipos.length < 2) return "";
+  return `<div class="marcador">
+      ${equipos.map((e) => `<span class="pastilla marcador-equipo${e.id === S.equipoId ? " mio" : ""}"
+            style="border-color:${esc(e.color.hex)}">
+          <span class="punto" style="background:${esc(e.color.hex)}"></span>
+          ${esc(e.nombre)} <b>${(e.cartas || []).length}</b></span>`).join("")}
+    </div>`;
+}
+
+function barraSuperior() {
   const mio = miEquipo();
   const activo = equipoActivo();
-  const crono = limiteCrono
-    ? `<span class="pastilla crono-mini" id="crono" data-limite="${limiteCrono}">
-         ⏱ ${reloj((limiteCrono - Net.ahora()) / 1000)}</span>`
-    : "";
   return `
     <div class="barra">
       <span class="pastilla">Sala ${esc(S.codigo)}</span>
@@ -1233,11 +1313,11 @@ function barraSuperior(limiteCrono) {
           <span class="punto" style="background:${esc(activo.color.hex)}"></span>
           Turno: ${esc(activo.nombre)}</span>` : ""}
       ${mio ? `<span class="pastilla">${htmlFichas(mio.fichas || 0)}</span>` : ""}
-      ${crono}
       <span class="sep"></span>
-      <button class="sec" style="padding:9px 18px;min-height:auto;font-size:14px" data-accion="verOtros">Otros equipos</button>
+      <button class="sec" style="padding:9px 18px;min-height:auto;font-size:14px" data-accion="verOtros">Ver equipos</button>
       <button class="sec" style="padding:9px 18px;min-height:auto;font-size:14px" data-accion="salir">Salir</button>
-    </div>`;
+    </div>
+    ${marcador()}`;
 }
 
 function controlesMusica() {
@@ -1276,9 +1356,9 @@ function vistaJuego() {
       + `ventaja sobre el segundo para ganar.`)
     : "";
 
-  if (r.subfase === "colocando") return barraSuperior(r.limite) + desempate + faseColocando(r, activo, soyActivo, timeline) + botonAyuda();
-  if (r.subfase === "saltando")  return barraSuperior(r.limiteSalto || null) + desempate + faseSaltando(r, activo, timeline);
-  if (r.subfase === "robando")   return barraSuperior(r.limiteRobo || null) + desempate + faseRobando(r, activo, soyActivo, timeline) + botonAyuda();
+  if (r.subfase === "colocando") return barraSuperior() + desempate + faseColocando(r, activo, soyActivo, timeline) + botonAyuda();
+  if (r.subfase === "saltando")  return barraSuperior() + desempate + faseSaltando(r, activo, timeline);
+  if (r.subfase === "robando")   return barraSuperior() + desempate + faseRobando(r, activo, soyActivo, timeline) + botonAyuda();
   return barraSuperior() + desempate + faseRevelado(r, activo, soyActivo, timeline) + botonAyuda();
 }
 
@@ -1585,7 +1665,7 @@ function modal() {
     const puedeCorregir = puedeCorregirAnio();
     const r = E?.ronda;
     const puedeReintentar = soyHost() && !!r && ["colocando", "robando"].includes(r.subfase);
-    const puedeVerPool = ["spotify", "todo"].includes(E?.config?.mazo);
+    const puedeVerPool = ["spotify", "todo", "mixto"].includes(E?.config?.mazo);
     cuerpo = `
       <h2>¿Algún problema con esta canción?</h2>
       ${puedeReintentar ? `
@@ -1650,13 +1730,13 @@ function modal() {
   }
 
   if (S.modal === "otros") {
-    const otros = R.equiposEnOrden(E.equipos).filter((e) => e.id !== S.equipoId);
+    const todos = R.equiposEnOrden(E.equipos);
     const sel = S.modalEquipo ? E.equipos[S.modalEquipo] : null;
     cuerpo = `
-      <h2>Otros equipos</h2>
-      ${otros.length > 1 ? `<div class="fila" style="margin-bottom:12px">
-          ${otros.map((e) => `<button class="sec" data-accion="verEquipo" data-id="${esc(e.id)}"
-              style="${S.modalEquipo === e.id ? `border-color:${esc(e.color.hex)}` : ""}">${esc(e.nombre)}</button>`).join("")}
+      <h2>Equipos</h2>
+      ${todos.length > 1 ? `<div class="fila" style="margin-bottom:12px">
+          ${todos.map((e) => `<button class="sec" data-accion="verEquipo" data-id="${esc(e.id)}"
+              style="${S.modalEquipo === e.id ? `border-color:${esc(e.color.hex)}` : ""}">${esc(e.nombre)}${e.id === S.equipoId ? " (tú)" : ""}</button>`).join("")}
         </div>` : ""}
       ${sel ? `${htmlEquipoFila(sel)}${htmlLinea(R.ordenar(sel.cartas || []))}`
             : '<p>Elige un equipo para ver sus cartas.</p>'}

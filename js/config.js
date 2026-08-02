@@ -38,8 +38,8 @@ export const FIREBASE_CONFIG = {
 // ------------------------------------------------------------
 export const AJUSTES = {
   cartasParaGanar: 10,     // cartas necesarias para ganar
-  segundosTurno: 180,      // 3 minutos para colocar la carta
-  segundosRobo: 45,        // tiempo de cada equipo para decidir si roba
+  segundosTurno: 300,      // 5 minutos para colocar la carta
+  segundosRobo: 90,        // 1:30 de cada equipo para decidir si roba
   fichasIniciales: 3,
   fichasMaximas: 5,
   fichasParaSaltar: 2,
