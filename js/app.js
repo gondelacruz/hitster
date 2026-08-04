@@ -536,7 +536,10 @@ async function motorPaso() {
   // --- fase 3: revelado; esperamos a que pulsen "siguiente" ---
   if (r.subfase === "revelado" && r.siguientePedida) {
     return void (await pasoUnaVez("lanzada", r.n, async () => {
-      const ganador = R.comprobarVictoria(E.equipos, E.primerEquipo);
+      const ganador = R.comprobarVictoria(E.equipos, E.primerEquipo, {
+        ganadorCarta: r.resultado?.ganadorCarta ?? null,
+        equipoActivo: r.equipoActivo,
+      });
       if (ganador) {
         await Sp.pausar().catch(() => {});
         await Net.actualizar(S.codigo, { fase: "fin", ganador, ronda: null });
@@ -1331,7 +1334,11 @@ function controlesMusica() {
 /**
  * ¿Estamos en "gana por dos"? Pasa cuando el equipo que empezó la partida ha
  * llegado (o está empatado) a las cartas necesarias para ganar pero con
- * menos de 2 de ventaja sobre el segundo — ver R.comprobarVictoria.
+ * menos de 2 de ventaja sobre el segundo — ver R.comprobarVictoria. Salvo
+ * que la carta decisiva se la haya robado a OTRO equipo en el turno de ese
+ * equipo (ese equipo ya tuvo su propio turno y falló, así que no hace falta
+ * pedir 2 de ventaja): en ese caso no se muestra el aviso, porque la
+ * partida va a terminar ya en cuanto se pase de ronda.
  */
 function enModoDesempate() {
   if (!E?.primerEquipo || !E.equipos?.[E.primerEquipo]) return false;
@@ -1341,7 +1348,10 @@ function enModoDesempate() {
     .filter(([id]) => id !== E.primerEquipo)
     .map(([, e]) => (e.cartas || []).length);
   const segundoMax = otros.length ? Math.max(...otros) : 0;
-  return primeroN >= segundoMax && primeroN - segundoMax < 2;
+  if (!(primeroN >= segundoMax && primeroN - segundoMax < 2)) return false;
+  const r = E.ronda;
+  if (r?.resultado?.ganadorCarta === E.primerEquipo && r.equipoActivo !== E.primerEquipo) return false;
+  return true;
 }
 
 function vistaJuego() {
@@ -1467,7 +1477,8 @@ function faseRobando(r, activo, soyActivo, timeline) {
   } else if (meToca && !yaElegi) {
     panel = `<h2>¿Se han equivocado?</h2>
              <p>Si creéis que la canción va en otro hueco, poned una ficha ahí. Si acertáis, la carta es vuestra.</p>
-             <p class="mini">Intentarlo cuesta 1 ficha (tenéis ${mio.fichas || 0}).</p>`;
+             <p class="mini">Si os equivocáis perdéis la ficha (tenéis ${mio.fichas || 0}); si acertáis, no la
+               perdéis, aunque el otro equipo se quede la carta por haber acertado también.</p>`;
   } else if (yaElegi) {
     panel = `<h2>Decisión tomada</h2><p>Esperando a los demás equipos…</p>`;
   } else {
@@ -1601,8 +1612,11 @@ function modal() {
       <p><b>En tu turno</b> suena una canción y ves una carta boca abajo. Tenéis
          ${AJUSTES.segundosTurno / 60} minutos para elegir el hueco donde creéis que encaja por año, y pulsáis
          <b>Finalizar</b>.</p>
-      <p><b>Robo:</b> después, los demás equipos, por orden de juego, pueden gastar 1 ficha para
-         poner su ficha en otro hueco. Si vosotros fallasteis y alguno de ellos acierta, se lleva la carta.</p>
+      <p><b>Robo:</b> después, los demás equipos, por orden de juego, pueden poner una ficha en otro
+         hueco. Si vosotros fallasteis y alguno de ellos acierta, se lleva la carta. Solo se pierde la
+         ficha si el hueco elegido estaba mal: si erais los dos correctos (por ejemplo, dos canciones del
+         mismo año, donde vale tanto antes como después), la carta es vuestra por prioridad, pero al que
+         robó no le cuesta la ficha, porque también tenía razón.</p>
       <p><b>Fichas:</b> empezáis con ${AJUSTES.fichasIniciales} (máximo ${AJUSTES.fichasMaximas}).
          Si acertáis el año y además el artista y el título, ganáis una.
          Podéis gastar ${AJUSTES.fichasParaSaltar} para saltar una canción que no conocéis.</p>

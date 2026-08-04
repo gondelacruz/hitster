@@ -81,7 +81,11 @@ const cartas = (...anios) => anios.map((a, i) => ({ titulo: "c" + i, artista: "a
   });
   t("activo falla", r.aciertoActivo === false);
   t("el ladrón que acierta se lleva la carta", r.ganadorCarta === "B");
-  t("ambos ladrones pagan ficha", r.equipos.B.fichas === 2 && r.equipos.C.fichas === 2);
+  // El robo solo cuesta ficha si el hueco elegido estaba mal de verdad: B
+  // acertó (aunque fuese el primero en orden y se llevara la carta), así que
+  // no pierde la ficha; C sí falló, así que a C sí le cuesta.
+  t("el ladrón que acertó no pierde la ficha", r.equipos.B.fichas === 3);
+  t("el ladrón que falló sí pierde la ficha", r.equipos.C.fichas === 2);
 
   // Nadie acierta: la carta se descarta.
   r = R.resolverRonda({

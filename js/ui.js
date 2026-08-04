@@ -51,17 +51,31 @@ export function htmlLinea(cartas, opciones = {}) {
   const lista = cartas || [];
   let out = '<div class="linea">';
 
+  // Entre dos cartas del MISMO año, el hueco de en medio nunca hace falta:
+  // por la regla de empates (ver R.slotValido, "si hay empate de años, valen
+  // las dos posiciones adyacentes"), cualquier año que valga justo en medio
+  // vale exactamente igual justo antes de la primera carta o justo después
+  // de la segunda — así que ofrecerlo como una opción más para colocar o
+  // robar solo confunde sin dar ninguna opción nueva de verdad.
+  const huecoRedundante = (i) => i > 0 && i < lista.length && lista[i - 1].anio === lista[i].anio;
+
   const hueco = (i) => {
+    const redundante = huecoRedundante(i);
+    // Si de verdad hay algo que mostrar ahí (una marca de la ronda, o es tu
+    // propia selección ya hecha), lo dejamos igual aunque sea redundante —
+    // solo dejamos de OFRECERLO como opción nueva.
+    if (redundante && !marcas[i] && elegido !== i) return "";
+    const esElegible = !!(elegibles && elegibles.has(i) && !redundante);
     const clases = ["hueco"];
-    if (elegibles && elegibles.has(i)) clases.push("elegible");
+    if (esElegible) clases.push("elegible");
     if (elegido === i) clases.push("elegido");
     const m = marcas[i];
     if (m?.clase) clases.push(m.clase);
     const etiqueta = m?.texto
       ? `<span class="marca">${esc(m.texto)}</span>`
-      : (elegibles && elegibles.has(i) ? "+" : "");
+      : (esElegible ? "+" : "");
     const sub = m?.sub ? `<span>${esc(m.sub)}</span>` : "";
-    const attr = elegibles && elegibles.has(i) ? ` data-accion="hueco" data-slot="${i}" role="button" tabindex="0"` : "";
+    const attr = esElegible ? ` data-accion="hueco" data-slot="${i}" role="button" tabindex="0"` : "";
     return `<div class="${clases.join(" ")}"${attr}>${etiqueta}${sub}</div>`;
   };
 

@@ -109,6 +109,7 @@ localStorage.setItem("hitster_spotify_token", JSON.stringify({
 const fb = await import("./stubs/firebase.mjs");
 const Net = await import("../js/net.js");
 const R = await import("../js/reglas.js");
+const Ui = await import("../js/ui.js");
 // Importante: importamos config.js por esta misma ruta (el doble de prueba),
 // no como "../js/config.js": los módulos reales (app.js, spotify.js) reciben
 // config.js REDIRIGIDO a este doble (ver test/hooks.mjs), y así nos
@@ -555,6 +556,61 @@ console.log("Comprobando que un fallo de red no deja la app colgada…");
     llamadasDeRed === 1);
   t("el fallo de red se resuelve rápido, sin quedarse colgado", duracion < 2000);
 }
+
+// ------------------------------------------------------------
+//  Empates de año: el hueco de en medio entre dos cartas del mismo año no
+//  hace falta ofrecerlo (vale igual justo antes o justo después), y un robo
+//  correcto que pierde la carta por prioridad del equipo activo no debe
+//  costar la ficha (los dos bugs que reportó el usuario).
+// ------------------------------------------------------------
+console.log("Comprobando los empates de año (hueco redundante y ficha no perdida)…");
+
+const timelineEmpate = [
+  { titulo: "Antes", artista: "A", anio: 1990 },
+  { titulo: "Igual 1", artista: "B", anio: 2000 },
+  { titulo: "Igual 2", artista: "C", anio: 2000 },
+  { titulo: "Después", artista: "D", anio: 2010 },
+];
+const htmlEmpate = Ui.htmlLinea(timelineEmpate, {
+  elegibles: new Set(Array.from({ length: timelineEmpate.length + 1 }, (_, i) => i)),
+});
+const domEmpate = new JSDOM(`<div id="e">${htmlEmpate}</div>`).window.document;
+const huecosEmpate = [...domEmpate.querySelectorAll('[data-accion="hueco"]')];
+t("el hueco entre dos cartas del mismo año no se ofrece como opción",
+  !huecosEmpate.some((h) => Number(h.dataset.slot) === 2));
+t("pero los huecos antes y después de esa pareja siguen ahí",
+  huecosEmpate.some((h) => Number(h.dataset.slot) === 1) && huecosEmpate.some((h) => Number(h.dataset.slot) === 3));
+t("el resto de huecos (sin empate) se ofrecen todos con normalidad",
+  huecosEmpate.length === timelineEmpate.length + 1 - 1); // 5 posibles - 1 redundante
+
+// Si sí hay algo real que mostrar ahí (una marca de la ronda ya tomada), el
+// hueco no desaparece del todo, aunque sea uno "redundante".
+const htmlEmpateConMarca = Ui.htmlLinea(timelineEmpate, { marcas: { 2: { texto: "★", sub: "Equipo" } } });
+t("si ya hay una marca puesta en el hueco redundante, se sigue viendo",
+  htmlEmpateConMarca.includes("★"));
+
+// Robo correcto que pierde la carta por prioridad del activo: no cuesta ficha.
+const equiposRoboEmpate = {
+  activo: { cartas: [{ titulo: "Igual 1", artista: "B", anio: 2000 }], fichas: 3 },
+  ladron: { cartas: [], fichas: 3 },
+};
+const rondaRoboEmpate = { equipoActivo: "activo", colocacion: 1, robos: { ladron: 0 } };
+// colocacion:1 = después de "Igual 1" (2000); robos.ladron slot:0 = antes de
+// "Igual 1". La carta secreta también es de 2000: por la regla de empates,
+// AMBOS huecos son correctos.
+const resRoboEmpate = R.resolverRonda({ equipos: equiposRoboEmpate, ronda: rondaRoboEmpate, anioCarta: 2000 });
+t("con empate de años, el equipo activo se queda la carta (tiene prioridad)",
+  resRoboEmpate.ganadorCarta === "activo");
+t("el intento de robo se registra como correcto (también tenía razón)",
+  resRoboEmpate.intentos.find((i) => i.equipo === "ladron")?.correcto === true);
+t("y por eso NO pierde la ficha, aunque no se quede la carta",
+  resRoboEmpate.equipos.ladron.fichas === 3);
+
+// Contraste: un robo de verdad equivocado sí sigue constando la ficha, como siempre.
+const rondaRoboMalo = { equipoActivo: "activo", colocacion: 1, robos: { ladron: 3 } }; // slot fuera de lugar
+const resRoboMalo = R.resolverRonda({ equipos: equiposRoboEmpate, ronda: rondaRoboMalo, anioCarta: 2000 });
+t("un robo de verdad equivocado sigue costando la ficha",
+  resRoboMalo.equipos.ladron.fichas === 2);
 
 // ------------------------------------------------------------
 //  Pool comunitario: comprobación pura de la ponderación por canciones en común.
@@ -1009,6 +1065,94 @@ t("al borrarse la sala de desempate, la app vuelve a la pantalla de inicio",
   html().includes("Crear partida nueva"));
 
 // ------------------------------------------------------------
+//  Si el equipo que empezó llega a 10-9 ROBANDO en el turno de OTRO equipo
+//  (que ya había fallado su propio turno), no hace falta pedirle 2 de
+//  ventaja: ese otro equipo ya tuvo su oportunidad justa esa misma ronda y
+//  la falló por su cuenta — el "gana por dos" solo tiene sentido cuando el
+//  que empezó llega ahí en SU PROPIO turno (el bug que reportó el usuario).
+// ------------------------------------------------------------
+console.log('Comprobando que un robo limpio en turno ajeno no exige "gana por dos"…');
+
+// Comprobación directa y pura de la función, sin pasar por toda la interfaz.
+const cartasDeDesempate = (n) => Array.from({ length: n }, (_, i) => ({ titulo: "d" + i, artista: "a", anio: 1980 + i }));
+const equiposDesempatePuro = {
+  eq1: { id: "eq1", orden: 0, cartas: cartasDeDesempate(AJUSTES.cartasParaGanar) },       // 10
+  eq2: { id: "eq2", orden: 1, cartas: cartasDeDesempate(AJUSTES.cartasParaGanar - 1) },   // 9
+};
+t("si el primer equipo llega a 10-9 en SU PROPIO turno, sigue haciendo falta 2 de ventaja",
+  R.comprobarVictoria(equiposDesempatePuro, "eq1", { ganadorCarta: "eq1", equipoActivo: "eq1" }) === null);
+t("pero si llega a 10-9 ROBANDO en el turno de otro equipo, gana ya (ese equipo ya falló su propio turno)",
+  R.comprobarVictoria(equiposDesempatePuro, "eq1", { ganadorCarta: "eq1", equipoActivo: "eq2" }) === "eq1");
+t("sin información de la ronda (compatibilidad hacia atrás), se sigue pidiendo 2 de ventaja como antes",
+  R.comprobarVictoria(equiposDesempatePuro, "eq1") === null);
+
+// Ahora de extremo a extremo: fabricamos justo esa ronda (eq2 juega su turno,
+// falla, eq1 se la roba y llega a 10-9) y comprobamos que ni se muestra el
+// aviso de "gana por dos" ni hace falta otra ronda: la partida ya termina,
+// con eq1 como ganador.
+const codigoRoboLimpio = "4040";
+fb._escribir(`salas/${codigoRoboLimpio}`, {
+  // hostCliente = yo, para poder pulsar "Siguiente" aunque el equipo activo
+  // de la ronda fabricada (eq2) no sea el mío (ver el mismo truco en la
+  // prueba del motor, más arriba).
+  fase: "lobby", hostCliente: miId, config: { mazo: "famosas" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Los que Empezaron", color: COLORES_EQUIPO[0], orden: 0,
+           fichas: 3, cartas: [], miembros: {} },
+    eq2: { id: "eq2", nombre: "Los Retadores", color: COLORES_EQUIPO[1], orden: 1,
+           fichas: 3, cartas: [], miembros: {} },
+  },
+  usadas: {}, aportes: {}, ronda: null, ganador: null,
+});
+await clic('[data-accion="irUnirse"]', "Unirse para probar el robo limpio");
+document.getElementById("in-codigo").value = codigoRoboLimpio;
+await clic('[data-accion="buscarSala"]', "Buscar sala de robo limpio");
+await clic('[data-accion="unirmeEquipo"]', "Unirme a Los que Empezaron (robo limpio)");
+
+const cartaRobada = { titulo: "LaRobada", artista: "Z", anio: 2005 };
+fb._escribir(`salas/${codigoRoboLimpio}`, {
+  fase: "jugando", hostCliente: miId, config: { mazo: "famosas" }, primerEquipo: "eq1",
+  equipos: {
+    eq1: { id: "eq1", nombre: "Los que Empezaron", color: COLORES_EQUIPO[0], orden: 0, fichas: 3,
+           cartas: [...cartasDeDesempate(AJUSTES.cartasParaGanar - 1), cartaRobada], // 10, la robada incluida
+           miembros: { [miId]: true } },
+    eq2: { id: "eq2", nombre: "Los Retadores", color: COLORES_EQUIPO[1], orden: 1, fichas: 2,
+           cartas: cartasDeDesempate(AJUSTES.cartasParaGanar - 1), miembros: {} }, // 9, sin cambios: falló su turno
+  },
+  usadas: {}, ganador: null,
+  ronda: {
+    // n con un valor improbable a propósito, por el mismo motivo que la
+    // prueba del motor: `hecho.lanzada` se recuerda por número de ronda, sin
+    // distinguir de qué sala es, y no debe chocar con otras rondas n=1 de
+    // este mismo archivo.
+    n: 424242, equipoActivo: "eq2", subfase: "revelado",
+    colocacion: 3, robos: { eq1: 0 }, confirmada: true,
+    carta: cartaRobada,
+    resultado: {
+      aciertoActivo: false, ganadorCarta: "eq1",
+      intentos: [{ equipo: "eq1", slot: 0, correcto: true }],
+      slotsValidos: [],
+    },
+    esperandoBonus: false, siguientePedida: false, bonus: null, saltar: false, secreto: null,
+  },
+});
+await esperar(40);
+t('al robar limpiamente en turno ajeno, NO se muestra el aviso de "gana por dos"',
+  !html().includes("¡Gana por dos!"));
+
+await clic('[data-accion="siguiente"]', "Siguiente (robo limpio)");
+await esperar(40);
+const salaRoboLimpio = fb._leer(`salas/${codigoRoboLimpio}`);
+t("la partida termina ya, sin pedir otra ronda de desempate", salaRoboLimpio.fase === "fin");
+t("y gana quien empezó, que se llevó la carta limpiamente en turno ajeno", salaRoboLimpio.ganador === "eq1");
+
+await clic('[data-accion="salir"]', "Salir de la sala de robo limpio");
+fb._escribir(`salas/${codigoRoboLimpio}`, null);
+await esperar(30);
+t("al borrarse la sala de robo limpio, la app vuelve a la pantalla de inicio",
+  html().includes("Crear partida nueva"));
+
+// ------------------------------------------------------------
 //  Lista de canciones de Spotify aportadas, con opción de quitarlas.
 // ------------------------------------------------------------
 console.log("Comprobando la lista de canciones de Spotify aportadas…");
@@ -1176,14 +1320,25 @@ while (est().fase === "jugando" && vueltas++ < 2500) {
         continue;
       }
       const huecos = [...document.querySelectorAll('[data-accion="hueco"]')];
-      t("hay un hueco por cada posición posible", huecos.length === timeline.length + 1);
+      // Entre dos cartas del mismo año, el hueco de en medio ya no se ofrece
+      // (es redundante: vale igual justo antes o justo después — ver
+      // htmlLinea), así que hay uno por posición posible MENOS esos huecos
+      // redundantes.
+      const redundantesMI = timeline.slice(1).filter((c, i) => c.anio === timeline[i].anio).length;
+      t("hay un hueco por cada posición posible (menos las redundantes entre años iguales)",
+        huecos.length === timeline.length + 1 - redundantesMI);
       // Acertamos la mitad de las veces (y no solo un tercio): con partidas
       // de hasta 3 equipos, un acierto demasiado bajo hace que algunas
       // partidas simuladas tarden muchísimas rondas en converger por pura
       // varianza — no es un problema del juego, es de esta prueba.
+      const huecoPorSlot = (slot) => huecos.find((h) => Number(h.dataset.slot) === slot);
       const buenosMI = R.slotsValidos(timeline, secreto.anio);
-      const idxMI = (rondasJugadas % 2 === 0 && buenosMI.length) ? buenosMI[0] : rondasJugadas % huecos.length;
-      const elegido = huecos[idxMI];
+      // Si el primer slot válido fuera justo uno redundante (ya oculto), el
+      // de al lado también vale por la misma regla de empates — cogemos el
+      // primero de la lista que de verdad tenga hueco clicable.
+      const elegido = (rondasJugadas % 2 === 0 && buenosMI.length)
+        ? (buenosMI.map(huecoPorSlot).find(Boolean) || huecos[rondasJugadas % huecos.length])
+        : huecos[rondasJugadas % huecos.length];
       elegido.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
       await esperar(8);
       await clic('[data-accion="finalizar"]', "Finalizar");

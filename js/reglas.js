@@ -76,12 +76,18 @@ export function resolverRonda({ equipos, ronda, anioCarta }) {
 
   const aciertoActivo = slotValido(timeline, anioCarta, ronda.colocacion);
 
-  // Los intentos de robo cuestan 1 ficha, se acierte o no.
+  // El intento de robo solo cuesta la ficha si el hueco elegido estaba MAL
+  // (fallo de verdad). Si el hueco era correcto pero no se llevan la carta
+  // porque el equipo activo también acertó el suyo (empate de años: ambos
+  // pueden tener razón a la vez, ver `slotValido`), no se penaliza — el
+  // equipo activo tiene prioridad para quedarse la carta, pero eso no
+  // convierte en "fallo" un robo que en realidad era correcto.
   const intentos = [];
   for (const [eqId, slot] of Object.entries(ronda.robos || {})) {
     if (typeof slot !== "number") continue;
-    intentos.push({ equipo: eqId, slot, correcto: slotValido(timeline, anioCarta, slot) });
-    eqs[eqId].fichas = Math.max(0, (eqs[eqId].fichas || 0) - 1);
+    const correcto = slotValido(timeline, anioCarta, slot);
+    intentos.push({ equipo: eqId, slot, correcto });
+    if (!correcto) eqs[eqId].fichas = Math.max(0, (eqs[eqId].fichas || 0) - 1);
   }
 
   let ganadorCarta = null;   // id del equipo que se queda la carta (o null = se descarta)
@@ -132,8 +138,18 @@ const EXTRA_DESEMPATE = 3;
  * indefinidamente, el desempate tiene un tope: si el líder llega a
  * `cartasParaGanar + EXTRA_DESEMPATE` sin haber sacado esas 2 de ventaja,
  * gana igualmente con lo que lleve.
+ *
+ * Excepción (el bug que reportó el usuario): esa "pequeña ventaja
+ * estructural" solo existe cuando el equipo que empezó llega al 10-9 en SU
+ * PROPIO turno —porque entonces el otro equipo, ese ciclo, ni siquiera tuvo
+ * su turno para intentar llegar también—. Si en cambio llega ahí ROBÁNDOLE
+ * la carta a OTRO equipo en el turno de ESE equipo, no hace falta pedir 2 de
+ * ventaja: el equipo robado ya tuvo su propia oportunidad esa misma ronda y
+ * la falló por su cuenta, así que es una carta ganada limpiamente, no la
+ * ventaja de haber empezado. `rondaResuelta` (opcional) son los datos de la
+ * ronda que se acaba de resolver: `{ ganadorCarta, equipoActivo }`.
  */
-export function comprobarVictoria(equipos, primerEquipoId) {
+export function comprobarVictoria(equipos, primerEquipoId, rondaResuelta = null) {
   const conteos = equiposEnOrden(equipos).map((e) => ({ id: e.id, n: (e.cartas || []).length }));
   const max = Math.max(0, ...conteos.map((c) => c.n));
   if (max < AJUSTES.cartasParaGanar) return null;
@@ -142,7 +158,14 @@ export function comprobarVictoria(equipos, primerEquipoId) {
   const otros = conteos.filter((c) => c.id !== primerEquipoId);
   const segundoMax = otros.length ? Math.max(...otros.map((c) => c.n)) : 0;
 
-  const enDesempate = primero && primero.n === max && max - segundoMax < 2;
+  let enDesempate = primero && primero.n === max && max - segundoMax < 2;
+
+  const roboLimpioEnTurnoAjeno = rondaResuelta
+    && rondaResuelta.ganadorCarta === primerEquipoId
+    && rondaResuelta.equipoActivo != null
+    && rondaResuelta.equipoActivo !== primerEquipoId;
+  if (enDesempate && roboLimpioEnTurnoAjeno) enDesempate = false;
+
   if (enDesempate && max < AJUSTES.cartasParaGanar + EXTRA_DESEMPATE) return null;
 
   const ganador = conteos.find((c) => c.n === max);

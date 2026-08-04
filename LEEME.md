@@ -214,31 +214,40 @@ Spotify ni cuenta de nada para jugar.
 ### Las reglas
 
 - Cada equipo empieza con **una carta** y **3 fichas** (máximo 5).
-- En tu turno suena una canción y ves una carta boca abajo. Tenéis **3 minutos** para elegir
+- En tu turno suena una canción y ves una carta boca abajo. Tenéis **5 minutos** para elegir
   el hueco de vuestra línea del tiempo donde creéis que encaja por año, y pulsáis **Finalizar**.
-- Después, los demás equipos, **por orden de juego**, pueden gastar **1 ficha** para poner su ficha
-  en otro hueco. Dos equipos no pueden pedir el mismo hueco.
+- Después, los demás equipos, **por orden de juego**, pueden poner **1 ficha** en otro hueco (tienen
+  **1:30** para decidir). Dos equipos no pueden pedir el mismo hueco. Si hay dos cartas seguidas del
+  mismo año, no hace falta elegir el hueco de en medio: justo antes o justo después vale exactamente
+  igual, así que ni se ofrece como opción.
 - Si el equipo del turno acierta, se queda la carta y se le pregunta si también acertó
   **artista y título**; si dicen que sí, ganan una ficha.
 - Si falla, el primer equipo (por orden de juego) que haya acertado el hueco **le roba la carta**.
-  Si nadie acierta, la carta se descarta.
+  Si nadie acierta, la carta se descarta. Robar solo cuesta la ficha si os equivocáis: si acertabais
+  el hueco pero el equipo del turno también había acertado el suyo (por ejemplo, dos años iguales),
+  se queda la carta él por prioridad, pero a vosotros no os cuesta la ficha — teníais razón igual.
 - En vuestro turno podéis gastar **2 fichas** para saltar una canción que no conocéis. Antes de
   cambiarla, la app **enseña la carta boca arriba 5 segundos** para que sepáis qué canción era, y
   luego pasa a la siguiente sola.
 - **Gana el primer equipo con 10 cartas** bien ordenadas — con una excepción, ver "Gana por dos"
   más abajo.
 
-El botón **Otros equipos** enseña las cartas de los demás en cualquier momento.
+El botón **Ver equipos** enseña las cartas de cualquier equipo (el vuestro incluido) en cualquier
+momento.
 
 ### Gana por dos
 
-Si el equipo que **empezó la partida** es quien llega primero a 10 cartas pero el segundo se queda
-a solo una (un 10-9), la partida no se corta ahí: hay que seguir jugando hasta que alguien saque
+Si el equipo que **empezó la partida** llega a 10 cartas **en su propio turno** pero el segundo se
+queda a solo una (un 10-9), la partida no se corta ahí: hay que seguir jugando hasta que alguien saque
 **2 cartas de ventaja**, como el "gana por dos" del tenis. Veréis un aviso en pantalla mientras dure
 esta situación. Si es **cualquier otro equipo** el que llega primero a 10, gana en el momento, como
 siempre — la regla solo evita que quien empezó la partida gane por el margen mínimo, ya que arrancar
 da una pequeña ventaja. Por si acaso, tiene un tope: si nadie saca esas 2 de ventaja antes de llegar
 a 13 cartas, gana quien más lleve en ese momento (para que la partida no se alargue de más).
+
+Excepción: si quien empezó llega a ese 10-9 **robándole la carta a otro equipo en el turno de ese
+equipo** (no en el suyo propio), gana ya sin más — ese equipo ya había tenido su propio turno esa
+misma ronda y falló por su cuenta, así que no hace falta pedir 2 de ventaja.
 
 ### El botón «?» de la esquina
 
