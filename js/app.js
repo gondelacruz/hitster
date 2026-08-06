@@ -254,7 +254,12 @@ export function usosPorAportante(pool, usadas) {
  * que le toque, cante lo que cante y tenga las que tenga. Una canción que
  * varias personas compartan cuenta en el "cajón" de cada una de ellas, así
  * que sigue teniendo, de forma natural, algo más de probabilidad — pero sin
- * ningún multiplicador aparte.
+ * ningún multiplicador aparte. Y dentro de la persona que toque, se mezclan
+ * épocas (ver `elegirDecadaVariada`) en vez de coger cualquiera de sus
+ * canciones sin más: el Spotify de cualquiera está cargado sobre todo de lo
+ * último que ha escuchado, así que sin esto casi todo acaba saliendo del
+ * año en curso (el bug real que reportó el usuario: "todas las canciones
+ * son de 2026").
  */
 export function elegirDeSpotifyPorPersona(lista) {
   const porPersona = new Map(); // clienteId -> canciones libres suyas
@@ -267,8 +272,31 @@ export function elegirDeSpotifyPorPersona(lista) {
   }
   const personas = [...porPersona.keys()];
   const persona = personas[Math.floor(Math.random() * personas.length)];
-  const suyas = porPersona.get(persona);
-  return suyas[Math.floor(Math.random() * suyas.length)];
+  return elegirDecadaVariada(porPersona.get(persona));
+}
+
+const decadaDe = (anio) => Math.floor(anio / 10) * 10;
+
+/**
+ * Dentro de las canciones de UNA MISMA persona, mezcla épocas: agrupa por
+ * década y sortea una década al azar ENTRE LAS QUE TIENE ESA PERSONA (no
+ * ponderada por cuántas canciones tenga de cada una), y solo luego una
+ * canción al azar dentro de esa década. Así, alguien con 300 canciones de
+ * este año y solo 3 de los 90 tiene las mismas probabilidades de que le
+ * toque una década que la otra, en vez de que lo más reciente —con lo que
+ * casi todo el mundo tiene cargado medio Spotify— se coma todas las tiradas.
+ */
+export function elegirDecadaVariada(lista) {
+  const porDecada = new Map();
+  for (const c of lista) {
+    const d = decadaDe(c.anio);
+    if (!porDecada.has(d)) porDecada.set(d, []);
+    porDecada.get(d).push(c);
+  }
+  const decadas = [...porDecada.keys()];
+  const decada = decadas[Math.floor(Math.random() * decadas.length)];
+  const cancionesDecada = porDecada.get(decada);
+  return cancionesDecada[Math.floor(Math.random() * cancionesDecada.length)];
 }
 
 /** Resumen para mostrar en el lobby: cuánta gente ha aportado y cuántas coinciden. */
@@ -357,7 +385,6 @@ export function elegirPonderado(lista, usos = null) {
 // de esa década, priorizamos lo que varios jugadores tengan en común.
 const PESO_DECADA = { 1950: 1, 1960: 2 };
 const PESO_DECADA_NORMAL = 4;
-const decadaDe = (anio) => Math.floor(anio / 10) * 10;
 
 export function elegirPonderadoPorDecada(lista, usos = null) {
   if (!lista.length) return null;
@@ -560,7 +587,11 @@ async function resolver() {
   const carta = { titulo: secreto.titulo, artista: secreto.artista, anio: secreto.anio };
   const equipos = R.entregarCarta(res.equipos, res.ganadorCarta, carta);
 
-  await Sp.pausar().catch(() => {});
+  // No paramos la música al revelar: que siga sonando la canción de esta
+  // ronda (mientras se discute el resultado, se responde el bonus, etc.) y
+  // solo se corte cuando de verdad empiece a sonar la siguiente, en
+  // `nuevaRonda` — `Sp.reproducir` ya se encarga de cambiar de canción sin
+  // que haga falta pararla antes.
   await Net.actualizar(S.codigo, {
     equipos,
     "ronda/subfase": "revelado",
@@ -610,13 +641,13 @@ async function nuevaRonda(equipoId) {
 /**
  * Al saltar una canción (con o sin fichas), primero la enseñamos boca arriba
  * 5 segundos —para que se sepa cuál era— y solo después pasamos a la
- * siguiente. Se hace en dos pasos: aquí revelamos y paramos la música;
- * `terminarSalto` (llamado por el motor cuando pasan los 5s) es quien saca
- * la carta nueva de verdad.
+ * siguiente. Se hace en dos pasos: aquí revelamos (la canción que se está
+ * saltando sigue sonando esos 5 segundos, no la paramos); `terminarSalto`
+ * (llamado por el motor cuando pasan los 5s) es quien saca la carta nueva de
+ * verdad y, con ella, cambia lo que suena.
  */
 async function empezarRevelacionSalto() {
   const secreto = Net.revelar(E.ronda.secreto, S.codigo);
-  await Sp.pausar().catch(() => {});
   await Net.actualizar(S.codigo, {
     "ronda/subfase": "saltando",
     "ronda/carta": secreto ? { titulo: secreto.titulo, artista: secreto.artista, anio: secreto.anio } : null,

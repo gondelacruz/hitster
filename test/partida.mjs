@@ -760,6 +760,42 @@ t("elegirDeSpotifyPorPersona no revienta si a alguna canción le falta 'aportant
   !!App.elegirDeSpotifyPorPersona([{ titulo: "Suelta", artista: "A", anio: 2000, uri: "s1" }]));
 
 // ------------------------------------------------------------
+//  Mezcla de épocas dentro de UNA MISMA persona: el Spotify de cualquiera
+//  está cargado sobre todo de lo último que ha escuchado, así que sin esto
+//  casi todo sale del año en curso (el bug real: "todas las canciones son
+//  de 2026").
+// ------------------------------------------------------------
+console.log("Comprobando la mezcla de épocas dentro del Spotify de una persona…");
+const catalogoSesgado = [
+  ...Array.from({ length: 97 }, (_, i) => ({ titulo: `Reciente${i}`, artista: "A", anio: 2026, uri: `r${i}` })),
+  ...Array.from({ length: 3 }, (_, i) => ({ titulo: `Vieja${i}`, artista: "B", anio: 1990, uri: `v${i}` })),
+];
+let vecesVieja = 0;
+const INTENTOS_DECADA = 4000;
+for (let i = 0; i < INTENTOS_DECADA; i++) {
+  if (App.elegirDecadaVariada(catalogoSesgado).titulo.startsWith("Vieja")) vecesVieja++;
+}
+t("elegirDecadaVariada da a cada década las mismas probabilidades, tenga 3 canciones o 97",
+  vecesVieja / INTENTOS_DECADA > 0.4 && vecesVieja / INTENTOS_DECADA < 0.6);
+
+// Integración: con una única persona aportando (sin nadie más con quien
+// repartir "personas"), sacarCancion debe seguir sacando de ambas décadas a
+// lo largo de la partida, no solo de la más numerosa.
+const estadoUnaPersonaSesgada = {
+  aportes: { p1: { nombre: "Persona 1", canciones: catalogoSesgado.map((c) => ({ ...c, peso: 1 })) } },
+};
+const decadasVistasSpotify = new Set();
+let usadasDecada = {};
+for (let i = 0; i < 30; i++) {
+  const c = App.sacarCancion({ config: { mazo: "spotify" }, usadas: usadasDecada, ...estadoUnaPersonaSesgada });
+  if (!c) break;
+  usadasDecada = { ...usadasDecada, [App.clave(c)]: true };
+  decadasVistasSpotify.add(Math.floor(c.anio / 10) * 10);
+}
+t("con mazo 'spotify', sacarCancion también saca de la década minoritaria, no solo de 2026",
+  decadasVistasSpotify.has(1990));
+
+// ------------------------------------------------------------
 //  Mazo "mixto": reparto ~50/50 entre español e inglés, autocorrectivo pero
 //  sin alternancia estricta (para que no se note un patrón previsible).
 // ------------------------------------------------------------
@@ -1153,6 +1189,45 @@ t("al borrarse la sala de robo limpio, la app vuelve a la pantalla de inicio",
   html().includes("Crear partida nueva"));
 
 // ------------------------------------------------------------
+//  La música no debe pararse al revelar el resultado de la ronda: tiene que
+//  seguir sonando hasta que la siguiente canción arranca de verdad (el
+//  usuario pidió expresamente que no se corte antes de tiempo).
+// ------------------------------------------------------------
+console.log("Comprobando que la música no se para al revelar…");
+const codigoMusica = "3030";
+fb._escribir(`salas/${codigoMusica}`, {
+  fase: "lobby", hostCliente: miId, config: { mazo: "famosas" },
+  equipos: {
+    eq1: { id: "eq1", nombre: "Equipo Música", color: COLORES_EQUIPO[0], orden: 0,
+           fichas: 3, cartas: [], miembros: {} },
+  },
+  usadas: {}, aportes: {}, ronda: null, ganador: null,
+});
+await clic('[data-accion="irUnirse"]', "Unirse para probar la música");
+document.getElementById("in-codigo").value = codigoMusica;
+await clic('[data-accion="buscarSala"]', "Buscar sala de música");
+await clic('[data-accion="unirmeEquipo"]', "Unirme a Equipo Música");
+fb._escribir(`salas/${codigoMusica}/fase`, "jugando");
+
+const pauseAntesDeRevelar = llamadas.pause;
+fb._escribir(`salas/${codigoMusica}/ronda`, {
+  // n único para no chocar con "hecho.resuelta" de otras rondas de este archivo.
+  n: 313131, equipoActivo: "eq1", subfase: "robando",
+  colocacion: 0, robos: {}, confirmada: true, turnoRobo: null, limiteRobo: 0,
+  carta: null, resultado: null, esperandoBonus: false, siguientePedida: false, saltar: false,
+  limiteSalto: 0, secreto: Net.ocultar({ titulo: "Suena", artista: "Y", anio: 2000 }, codigoMusica),
+});
+await esperar(60);
+const salaMusica = fb._leer(`salas/${codigoMusica}`);
+t("la ronda se resuelve y pasa a 'revelado'", salaMusica.ronda.subfase === "revelado");
+t("al revelar, NO se pausa la música (debe seguir sonando hasta la siguiente canción)",
+  llamadas.pause === pauseAntesDeRevelar);
+
+await clic('[data-accion="salir"]', "Salir de la sala de música");
+fb._escribir(`salas/${codigoMusica}`, null);
+await esperar(30);
+
+// ------------------------------------------------------------
 //  Lista de canciones de Spotify aportadas, con opción de quitarlas.
 // ------------------------------------------------------------
 console.log("Comprobando la lista de canciones de Spotify aportadas…");
@@ -1476,7 +1551,12 @@ t("se ejercitó el robo al menos una vez", robosHechos > 0);
 t("se ejercitó el salto de canción", saltosHechos > 0);
 t("se ejercitó el salto gratis de canción", saltosGratisHechos > 0);
 t("se buscó cada canción en Spotify", llamadas.search > 10);
-t("se pausó la música al revelar", llamadas.pause >= revelados - 1);
+// Ya NO se para la música al revelar ni al saltar: debe seguir sonando la
+// canción de la ronda hasta que la siguiente empieza de verdad — solo se
+// para de verdad al terminar la partida (ver el "fin" más abajo).
+t("no se pausa la música en cada revelado (sigue sonando hasta la siguiente canción)",
+  llamadas.pause < revelados);
+t("se paró la música al terminar la partida", llamadas.pause >= 1);
 
 console.log(`  ${revelados} rondas reveladas · ${robosHechos} robos · ${saltosHechos} saltos · ` +
             `ganador: ${fin.equipos[fin.ganador]?.nombre}`);
